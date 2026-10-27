@@ -1,0 +1,16 @@
+[Desktop Entry]
+Name=Voxelyx
+GenericName=Voxelyx
+Comment=Block-based multiplayer game platform
+Comment[de]=Blockbasierte Mehrspieler-Spieleplattform
+Comment[fr]=Plate-forme de jeu multijoueurs à base de blocs
+Exec=voxelyx
+Icon=voxelyx
+Terminal=false
+# Note: don't add PrefersNonDefaultGPU here, see #16095
+Type=Application
+Categories=Game;Simulation;
+StartupNotify=false
+StartupWMClass=voxelyx
+Keywords=sandbox;world;mining;crafting;blocks;nodes;multiplayer;roleplaying;
+X-Purism-FormFactor=Mobile;Workstation

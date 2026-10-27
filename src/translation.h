@@ -1,0 +1,80 @@
+// Voxelyx
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2017 Nore, Nathanaëlle Courant <nore@mesecons.net>
+
+#pragma once
+
+#include "gettext_plural_form.h"
+#include <unordered_map>
+#include <map>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+class Translations;
+extern Translations *g_client_translations;
+
+class Translations
+{
+public:
+	void setTargetLanguage(const std::string &lang);
+	void loadTranslation(const std::string &filename, const std::string &data);
+	void clear();
+
+	const std::wstring &getTranslation(
+			const std::wstring &textdomain, const std::wstring &s) const;
+	const std::wstring &getPluralTranslation(const std::wstring &textdomain,
+			const std::wstring &s, unsigned long int number) const;
+
+	static const std::string_view getFileBaseName(std::string_view filename);
+	static const std::string_view getFileLanguage(std::string_view filename);
+	// Checks just the file extension
+	static inline bool isTranslationFileType(std::string_view filename)
+	{
+		return !getFileBaseName(filename).empty();
+	}
+	// Checks that the filename includes a language tag
+	static inline bool isTranslationFile(std::string_view filename)
+	{
+		return !getFileLanguage(filename).empty();
+	}
+
+	// for testing
+	inline size_t size()
+	{
+		return m_translations.size() + m_plural_translations.size()/2;
+	}
+
+private:
+	std::string m_target_lang;
+	std::unordered_map<std::wstring, std::wstring> m_translations;
+	std::unordered_map<std::wstring,
+		std::pair<GettextPluralForm::Ptr, std::vector<std::wstring>>> m_plural_translations;
+
+	void addTranslation(const std::wstring &textdomain, const std::wstring &original,
+			const std::wstring &translated, bool is_fallback);
+	void addPluralTranslation(const std::wstring &textdomain,
+			const GettextPluralForm::Ptr &plural,
+			const std::wstring &original,
+			std::vector<std::wstring> &translated,
+			bool is_fallback);
+	static std::wstring unescapeC(const std::wstring &str);
+	static std::optional<std::pair<std::wstring, std::wstring>> parsePoLine(
+			const std::string &line);
+	static bool inEscape(const std::wstring &str, size_t pos);
+	void loadPoEntry(const std::wstring &basefilename,
+			const GettextPluralForm::Ptr &plural_form,
+			const std::map<std::wstring, std::wstring> &entry,
+			bool is_fallback);
+	void loadMoEntry(const std::wstring &basefilename,
+			const GettextPluralForm::Ptr &plural_form,
+			const std::string &original,
+			const std::string &translated,
+			bool is_fallback);
+	void loadTrTranslation(const std::string &data, bool is_fallback);
+	void loadPoTranslation(const std::string &basefilename,
+			const std::string &data, bool is_fallback);
+	void loadMoTranslation(const std::string &basefilename,
+			const std::string &data, bool is_fallback);
+};

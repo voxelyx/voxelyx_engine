@@ -1,0 +1,121 @@
+-- Voxelyx
+-- Copyright (C) 2013 sapier
+-- SPDX-License-Identifier: LGPL-2.1-or-later
+
+
+local function prepare_credits(dest, source)
+	local string = table.concat(source, "\n") .. "\n"
+
+	string = core.hypertext_escape(string)
+	string = string:gsub("%[.-%]", "<gray>%1</gray>")
+
+	table.insert(dest, string)
+end
+
+local function get_credits()
+	local f = assert(io.open(core.get_mainmenu_path() .. "/credits.json"))
+	local json = core.parse_json(f:read("*all"))
+	f:close()
+	return json
+end
+
+local function get_renderer_info()
+	local ret = {}
+
+	-- OpenGL version, stripped to just the important part
+	local s1 = core.get_active_renderer()
+	if s1:sub(1, 7) == "OpenGL " then
+		s1 = s1:sub(8)
+	end
+	local m = s1:match("^[%d.]+")
+	if not m then
+		m = s1:match("^ES [%d.]+")
+	end
+	ret[#ret+1] = m or s1
+	-- video driver
+	ret[#ret+1] = core.get_active_driver():lower()
+	-- irrlicht device
+	ret[#ret+1] = core.get_active_irrlicht_device():upper()
+
+	return table.concat(ret, " / ")
+end
+
+return {
+	name = "about",
+	caption = fgettext("About"),
+
+	cbf_formspec = function(tabview, name, tabdata)
+		local logofile = defaulttexturedir .. "logo.png"
+		local version = core.get_version()
+
+		local hypertext = {
+			"<tag name=heading color=#ff0>",
+			"<tag name=gray color=#aaa>",
+		}
+
+		local credits = get_credits()
+
+		table.insert_all(hypertext, {
+			"<heading>", fgettext_ne("Core Developers"), "</heading>\n",
+		})
+		prepare_credits(hypertext, credits.core_developers)
+		table.insert_all(hypertext, {
+			"\n",
+			"<heading>", fgettext_ne("Core Team"), "</heading>\n",
+		})
+		prepare_credits(hypertext, credits.core_team)
+		table.insert_all(hypertext, {
+			"\n",
+			"<heading>", fgettext_ne("Active Contributors"), "</heading>\n",
+		})
+		prepare_credits(hypertext, credits.contributors)
+		table.insert_all(hypertext, {
+			"\n",
+			"<heading>", fgettext_ne("Previous Core Developers"), "</heading>\n",
+		})
+		prepare_credits(hypertext, credits.previous_core_developers)
+		table.insert_all(hypertext, {
+			"\n",
+			"<heading>", fgettext_ne("Previous Contributors"), "</heading>\n",
+		})
+		prepare_credits(hypertext, credits.previous_contributors)
+
+		hypertext = table.concat(hypertext):sub(1, -2)
+
+		local fs = {
+			"image[1,0.5;3.4,3.4;", core.formspec_escape(logofile), "]",
+			"style_type[label;valign=center;halign=center;font=mono,bold;font_size=*1.1]",
+			"label[0.1,4;5.4,0.6;",
+			core.formspec_escape(version.project .. " " .. version.string), "]",
+			"style_type[button_url;border=false;textcolor=#4cd9f9]",
+			"button_url[1.5,4.6;2.5,0.5;homepage;luanti.org;https://www.luanti.org/]"
+		}
+
+		fs[#fs+1] = "tooltip[userdata;" ..
+				fgettext("Opens the directory that contains user-provided worlds, games, mods,\n" ..
+						"and texture packs in a file manager / explorer.") .. "]"
+		fs[#fs+1] = "button[0.5,5.1;4.5,0.8;userdata;" .. fgettext("Open User Data Directory") .. "]"
+
+		local active_renderer_info = fgettext("Active renderer:") .. "\n" ..
+			core.formspec_escape(get_renderer_info())
+		table.insert_all(fs, {
+			"style_type[textarea;valign=center;halign=center;font_size=*0.9]",
+			"textarea[0.1,6;5.4,1;;", active_renderer_info, ";]",
+			"hypertext[5.5,0.25;9.75,6.6;credits;", core.formspec_escape(hypertext), "]"
+		})
+
+		return table.concat(fs, "")
+	end,
+
+	cbf_button_handler = function(this, fields, name, tabdata)
+		if fields.userdata then
+			core.open_dir(core.get_user_path())
+		end
+	end,
+
+	on_change = function(type)
+		if type == "ENTER" then
+			mm_game_theme.set_engine()
+		end
+	end,
+}

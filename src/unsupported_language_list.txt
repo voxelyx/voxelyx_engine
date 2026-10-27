@@ -1,0 +1,9 @@
+List of languages that are not supported. See issue #4638.
+ar
+dv
+he
+hi
+kn
+ms_Arab
+my
+th

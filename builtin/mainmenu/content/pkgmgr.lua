@@ -1,0 +1,627 @@
+-- Voxelyx
+-- Copyright (C) 2013 sapier
+-- SPDX-License-Identifier: LGPL-2.1-or-later
+
+--------------------------------------------------------------------------------
+local function get_last_folder(text,count)
+	local parts = text:split(DIR_DELIM)
+
+	if count == nil then
+		return parts[#parts]
+	end
+
+	local retval = ""
+	for i=1,count,1 do
+		retval = retval .. parts[#parts - (count-i)] .. DIR_DELIM
+	end
+
+	return retval
+end
+
+local function cleanup_path(temppath)
+
+	local parts = temppath:split("-")
+	temppath = ""
+	for i=1,#parts,1 do
+		if temppath ~= "" then
+			temppath = temppath .. "_"
+		end
+		temppath = temppath .. parts[i]
+	end
+
+	parts = temppath:split(".")
+	temppath = ""
+	for i=1,#parts,1 do
+		if temppath ~= "" then
+			temppath = temppath .. "_"
+		end
+		temppath = temppath .. parts[i]
+	end
+
+	parts = temppath:split("'")
+	temppath = ""
+	for i=1,#parts,1 do
+		if temppath ~= "" then
+			temppath = temppath .. ""
+		end
+		temppath = temppath .. parts[i]
+	end
+
+	parts = temppath:split(" ")
+	temppath = ""
+	for i=1,#parts,1 do
+		if temppath ~= "" then
+			temppath = temppath
+		end
+		temppath = temppath .. parts[i]
+	end
+
+	return temppath
+end
+
+local function get_texture_pack_path(txtpath, item)
+	return txtpath .. DIR_DELIM .. item .. DIR_DELIM
+end
+
+local function load_texture_packs(txtpath, retval)
+	local list = core.get_dir_list(txtpath, true)
+	local enabled_packs = pkgmgr.get_enabled_texture_packs()
+
+	for _, item in ipairs(list) do
+		if item ~= "base" then
+			local path = get_texture_pack_path(txtpath, item)
+			local conf = Settings(path .. "texture_pack.conf")
+			local order = table.indexof(enabled_packs, path)
+			if order == -1 then
+				order = nil
+			end
+			local enabled = order ~= nil
+
+			local title = conf:get("title") or item
+
+			-- list_* is only used if non-nil, else the regular versions are used.
+			retval[#retval + 1] = {
+				name = conf:get("name") or item,
+				title = title,
+				list_name = enabled and ("(" .. order .. ") " .. item) or nil,
+				list_title = enabled and ("(" .. order .. ") " .. title) or nil,
+				author = conf:get("author"),
+				release = tonumber(conf:get("release")) or 0,
+				type = "txp",
+				path = path,
+				enabled = enabled,
+				order = order,
+			}
+		end
+	end
+end
+
+--modmanager implementation
+pkgmgr = {}
+
+--- Scans a directory recursively for mods and adds them to `listing`
+-- @param path         Absolute directory path to scan recursively
+-- @param virtual_path Prettified unique path (e.g. "mods", "mods/mt_modpack")
+-- @param listing      Input. Flat array to insert located mods and modpacks
+function pkgmgr.get_mods(path, virtual_path, listing)
+	local mods = core.get_mod_list(path, virtual_path)
+	local parent = {}
+	for i, toadd in ipairs(mods) do
+		listing[#listing + 1] = toadd
+
+		if toadd.is_modpack then
+			parent[toadd.modpack_depth + 1] = toadd
+		end
+		if parent[toadd.modpack_depth] then
+			toadd.modpack = parent[toadd.modpack_depth].name
+		end
+
+		local parent_dir, dir_name = toadd.path:match("^(.+)[/\\]([^/\\]+)$")
+		toadd.dir_name = dir_name
+		toadd.parent_dir = parent_dir
+		toadd.type = toadd.is_modpack and "modpack" or "mod"
+	end
+
+	pkgmgr.update_translations(mods)
+end
+
+-- Must match PATH_DELIM in filesys.h
+local PATH_DELIM = PLATFORM == "Windows" and ";" or ":"
+
+--- Returns the ordered list of enabled texture pack paths, highest priority first.
+function pkgmgr.get_enabled_texture_packs()
+	return (core.settings:get("texture_path") or ""):split(PATH_DELIM)
+end
+
+function pkgmgr.set_enabled_texture_packs(list)
+	core.settings:set("texture_path", table.concat(list, PATH_DELIM))
+end
+
+--- Newly enabled packs are appended at the end, lowest priority.
+function pkgmgr.set_texture_pack_enabled(path, enabled)
+	local list = pkgmgr.get_enabled_texture_packs()
+
+	local index = table.indexof(list, path)
+	if index ~= -1 then
+		table.remove(list, index)
+	end
+
+	if enabled then
+		list[#list + 1] = path
+	end
+
+	pkgmgr.set_enabled_texture_packs(list)
+end
+
+--- Moves an enabled texture pack by `delta` places in the priority list.
+function pkgmgr.move_texture_pack(path, delta)
+	local list = pkgmgr.get_enabled_texture_packs()
+
+	local index = table.indexof(list, path)
+	if index == -1 then
+		return
+	end
+
+	local new_index = math.max(1, math.min(#list, index + delta))
+	table.insert(list, new_index, table.remove(list, index))
+	pkgmgr.set_enabled_texture_packs(list)
+end
+
+--- Removes enabled packs that are missing from dirs, returns true if any were removed.
+local function remove_missing_texture_packs(dirs)
+	local found = {}
+	for _, dir in ipairs(dirs) do
+		for _, item in ipairs(core.get_dir_list(dir, true)) do
+			found[get_texture_pack_path(dir, item)] = true
+		end
+	end
+
+	local list = pkgmgr.get_enabled_texture_packs()
+	local kept = {}
+
+	for _, path in ipairs(list) do
+		-- Paths outside dirs are assumed intentionally set by user and kept
+		local managed = false
+		for _, dir in ipairs(dirs) do
+			local prefix = dir .. DIR_DELIM
+			if path:sub(1, #prefix) == prefix then
+				managed = true
+			end
+		end
+		if not managed or found[path] then
+			kept[#kept + 1] = path
+		end
+	end
+
+	if #kept == #list then
+		return false
+	end
+	pkgmgr.set_enabled_texture_packs(kept)
+	return true
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.reload_texture_packs()
+	local txtpath = core.get_texturepath()
+	local txtpath_system = core.get_texturepath_share()
+	local retval = {}
+
+	-- mm_game_theme is nil outside the main menu
+	if remove_missing_texture_packs({txtpath, txtpath_system}) and mm_game_theme then
+		mm_game_theme.texturepack = pkgmgr.get_enabled_texture_packs()[1]
+	end
+
+	load_texture_packs(txtpath, retval)
+
+	-- on portable versions these two paths coincide. It avoids loading the path twice
+	if txtpath ~= txtpath_system then
+		load_texture_packs(txtpath_system, retval)
+	end
+
+	pkgmgr.update_translations(retval)
+
+	table.sort(retval, function(a, b)
+		return a.title:lower() < b.title:lower()
+	end)
+
+	pkgmgr.texture_packs = retval
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.get_all()
+	pkgmgr.load_all()
+
+	local result = {}
+
+	for _, mod in pairs(pkgmgr.global_mods:get_list()) do
+		result[#result + 1] = mod
+	end
+	for _, txp in pairs(pkgmgr.texture_packs) do
+		result[#result + 1] = txp
+	end
+
+	return result
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.get_folder_type(path)
+	local testfile = io.open(path .. DIR_DELIM .. "init.lua","r")
+	if testfile ~= nil then
+		testfile:close()
+		return { type = "mod", path = path }
+	end
+
+	testfile = io.open(path .. DIR_DELIM .. "modpack.conf","r")
+	if testfile ~= nil then
+		testfile:close()
+		return { type = "modpack", path = path }
+	end
+
+	testfile = io.open(path .. DIR_DELIM .. "modpack.txt","r")
+	if testfile ~= nil then
+		testfile:close()
+		return { type = "modpack", path = path }
+	end
+
+	testfile = io.open(path .. DIR_DELIM .. "texture_pack.conf","r")
+	if testfile ~= nil then
+		testfile:close()
+		return { type = "txp", path = path }
+	end
+
+	return nil
+end
+
+-------------------------------------------------------------------------------
+function pkgmgr.get_base_folder(temppath)
+	if temppath == nil then
+		return { type = "invalid", path = "" }
+	end
+
+	local ret = pkgmgr.get_folder_type(temppath)
+	if ret then
+		return ret
+	end
+
+	local subdirs = core.get_dir_list(temppath, true)
+	if #subdirs == 1 then
+		ret = pkgmgr.get_folder_type(temppath .. DIR_DELIM .. subdirs[1])
+		if ret then
+			return ret
+		else
+			return { type = "invalid", path = temppath .. DIR_DELIM .. subdirs[1] }
+		end
+	end
+
+	return nil
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.is_valid_modname(modpath)
+	return modpath:match("[^a-z0-9_]") == nil
+end
+
+
+-- expensive: recursively check all contained mods and return whether at least
+-- one of the contained mods is enabled resp. disabled
+local function check_modpack_status(rawlist, modpack)
+	local enabled_found, disabled_found
+	for j = 1, #rawlist do
+		if rawlist[j].modpack == modpack.name and rawlist[j].parent_dir == modpack.path then
+			if rawlist[j].is_modpack then
+				enabled_found, disabled_found = check_modpack_status(rawlist, rawlist[j])
+			elseif rawlist[j].enabled then
+				enabled_found = true
+			else
+				disabled_found = true
+			end
+
+			if enabled_found and disabled_found then
+				return true, true
+			end
+		end
+	end
+	return enabled_found, disabled_found
+end
+
+--------------------------------------------------------------------------------
+--- @param render_list filterlist
+--- @param use_technical_names boolean to show technical names instead of human-readable titles
+--- @param with_icon table or nil, from virtual path to icon object
+function pkgmgr.render_packagelist(render_list, use_technical_names, with_icon)
+	if not render_list then
+		if not pkgmgr.global_mods then
+			pkgmgr.reload_global_mods()
+		end
+		render_list = pkgmgr.global_mods
+	end
+
+	local list = render_list:get_list()
+	local retval = {}
+	for i, v in ipairs(list) do
+		local color = ""
+		local icon = 0
+		local icon_info = with_icon and with_icon[v.virtual_path or v.path]
+		local function update_icon_info(val)
+			if val and (not icon_info or (icon_info.type == "warning" and val.type == "error")) then
+				icon_info = val
+			end
+		end
+
+		if v.is_modpack then
+			local rawlist = render_list:get_raw_list()
+			color = mt_color_dark_green
+
+			for j = 1, #rawlist do
+				if rawlist[j].modpack == list[i].name and rawlist[j].parent_dir == list[i].path then
+					if with_icon then
+						update_icon_info(with_icon[rawlist[j].virtual_path or rawlist[j].path])
+					end
+
+					if rawlist[j].is_modpack then
+						local enabled_found, disabled_found = check_modpack_status(rawlist, rawlist[j])
+						if enabled_found then
+							icon = 1
+						end
+						if disabled_found or not enabled_found then
+							color = mt_color_grey
+						end
+					elseif rawlist[j].enabled then
+						icon = 1
+					else
+						-- Modpack not entirely enabled so showing as grey
+						color = mt_color_grey
+					end
+				end
+			end
+		elseif v.always_on then
+			icon = 1
+			color = mt_color_blue
+		elseif v.type == "txp" then
+			if v.enabled then
+				icon = 1
+				color = mt_color_green
+			else
+				color = mt_color_grey
+			end
+		elseif v.enabled then
+			icon = 1
+			color = mt_color_green
+		end
+
+		if icon_info then
+			if icon_info.type == "warning" then
+				color = mt_color_orange
+				icon = 2
+			elseif icon_info.type == "error" then
+				color = mt_color_red
+				icon = 3
+			elseif icon_info.type == "update" then
+				icon = 4
+			else
+				error("Unknown icon type " .. icon_info.type)
+			end
+		end
+
+		retval[#retval + 1] = color
+		retval[#retval + 1] = v.modpack_depth or 0
+
+		if with_icon then
+			retval[#retval + 1] = icon
+		end
+
+		if use_technical_names then
+			retval[#retval + 1] = core.formspec_escape(v.list_name or v.name)
+		else
+			retval[#retval + 1] = core.formspec_escape(v.list_title or v.list_name or v.title or v.name)
+		end
+	end
+
+	return table.concat(retval, ",")
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.get_dependencies(path)
+	if path == nil then
+		return {}, {}
+	end
+
+	local info = core.get_content_info(path)
+	return info.depends or {}, info.optional_depends or {}
+end
+
+----------- tests whether all of the mods in the modpack are enabled -----------
+function pkgmgr.is_modpack_entirely_enabled(rawlist, modpack)
+	local _, disabled_found = check_modpack_status(rawlist, modpack)
+	return not disabled_found
+end
+
+-- The per-world settings of world.conf (creative_mode, enable_damage, ...)
+function pkgmgr.get_worldconfig(worldpath)
+	return Settings(worldpath .. DIR_DELIM .. "world.conf"):to_table()
+end
+
+--------------------------------------------------------------------------------
+-- Caller is responsible for reloading content types (see reload_by_type)
+function pkgmgr.install_dir(expected_type, path, basename, targetpath)
+	assert(type(expected_type) == "string")
+	assert(type(path) == "string")
+	assert(basename == nil or type(basename) == "string")
+	assert(targetpath == nil or type(targetpath) == "string")
+
+	local basefolder = pkgmgr.get_base_folder(path)
+
+	if expected_type == "txp" then
+		assert(basename)
+
+		-- There's no good way to detect a texture pack, so let's just assume
+		-- it's correct for now.
+		if basefolder and basefolder.type ~= "invalid" and basefolder.type ~= "txp" then
+			return nil, fgettext_ne("Unable to install a $1 as a texture pack", basefolder.type)
+		end
+
+		local from = basefolder and basefolder.path or path
+		if not targetpath then
+			targetpath = core.get_texturepath() .. DIR_DELIM .. basename
+		end
+		core.delete_dir(targetpath)
+		if not core.copy_dir(from, targetpath, false) then
+			return nil,
+				fgettext_ne("Failed to install $1 to $2", basename, targetpath)
+		end
+		return targetpath, nil
+
+	elseif not basefolder then
+		return nil, fgettext_ne("Unable to find a valid mod or modpack")
+	end
+
+	-- Check type
+	if basefolder.type ~= expected_type and (basefolder.type ~= "modpack" or expected_type ~= "mod") then
+		return nil, fgettext_ne("Unable to install a $1 as a $2", basefolder.type, expected_type)
+	end
+
+	-- Set targetpath if not predetermined
+	if not targetpath then
+		local content_path
+		if basefolder.type == "modpack" or basefolder.type == "mod" then
+			if not basename then
+				basename = get_last_folder(cleanup_path(basefolder.path))
+			end
+			content_path = core.get_modpath()
+		else
+			error("Unknown content type")
+		end
+
+		if basename and (basefolder.type ~= "mod" or pkgmgr.is_valid_modname(basename)) then
+			targetpath = content_path .. DIR_DELIM .. basename
+		else
+			return nil,
+				fgettext_ne("Install: Unable to find suitable folder name for $1", path)
+		end
+	end
+
+	-- Copy it
+	core.delete_dir(targetpath)
+	if not core.copy_dir(basefolder.path, targetpath, false) then
+		return nil,
+			fgettext_ne("Failed to install $1 to $2", basename, targetpath)
+	end
+
+	return targetpath, nil
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.preparemodlist(data)
+	local retval = {}
+
+	-- read global mods
+	local global_mods = {}
+	local modpaths = core.get_modpaths()
+	for key, modpath in pairs(modpaths) do
+		pkgmgr.get_mods(modpath, key, global_mods)
+	end
+
+	for _, mod in ipairs(global_mods) do
+		mod.type = "mod"
+		mod.loc = "global"
+		mod.enabled = false
+		retval[#retval + 1] = mod
+	end
+
+	return retval
+end
+
+function pkgmgr.compare_package(a, b)
+	return a and b and a.name == b.name and a.path == b.path
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.comparemod(elem1,elem2)
+	if elem1 == nil or elem2 == nil then
+		return false
+	end
+	if elem1.name ~= elem2.name then
+		return false
+	end
+	if elem1.is_modpack ~= elem2.is_modpack then
+		return false
+	end
+	if elem1.type ~= elem2.type then
+		return false
+	end
+	if elem1.modpack ~= elem2.modpack then
+		return false
+	end
+
+	if elem1.path ~= elem2.path then
+		return false
+	end
+
+	return true
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.reload_global_mods()
+	local function is_equal(element,uid) --uid match
+		if element.name == uid then
+			return true
+		end
+	end
+	pkgmgr.global_mods = filterlist.create(pkgmgr.preparemodlist,
+			pkgmgr.comparemod, is_equal, nil, {})
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.reload_by_type(type)
+	if type == "txp" then
+		pkgmgr.reload_texture_packs()
+	elseif type == "mod" or type == "modpack" then
+		pkgmgr.reload_global_mods()
+	else
+		error("Unknown package type: " .. type)
+	end
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.load_all()
+	if not pkgmgr.global_mods then
+		pkgmgr.reload_global_mods()
+	end
+	if not pkgmgr.texture_packs then
+		pkgmgr.reload_texture_packs()
+	end
+end
+
+--------------------------------------------------------------------------------
+function pkgmgr.update_translations(list)
+	for _, item in ipairs(list) do
+		local info = core.get_content_info(item.path)
+		assert(info.path)
+		assert(info.textdomain)
+
+		assert(not item.is_translated)
+		item.is_translated = true
+
+		if info.title and info.title ~= "" then
+			item.title = core.get_content_translation(info.path, info.textdomain,
+				core.translate(info.textdomain, info.title))
+		end
+
+		if info.description and info.description ~= "" then
+			item.description = core.get_content_translation(info.path, info.textdomain,
+				core.translate(info.textdomain, info.description))
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- Returns the ContentDB ID for an installed piece of content.
+function pkgmgr.get_contentdb_id(content)
+	if content.author and content.author ~= "" and content.release > 0 then
+		return content.author:lower() .. "/" .. content.name
+	end
+
+	return nil
+end
+
+

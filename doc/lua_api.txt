@@ -1,0 +1,3 @@
+Moved to lua_api.md
+
+URL: https://github.com/voxelyx/voxelyx_engine/blob/main/doc/lua_api.md

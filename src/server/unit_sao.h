@@ -1,0 +1,165 @@
+// Voxelyx
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
+// Copyright (C) 2013-2020 Voxelyx core developers & community
+
+#pragma once
+
+#include "object_properties.h"
+#include "serveractiveobject.h"
+#include <quaternion.h>
+#include <AnimSpec.h>
+#include "util/numeric.h"
+
+class UnitSAO : public ServerActiveObject
+{
+public:
+
+	struct TrackAnimation {
+		scene::TrackAnimSpec spec;
+		enum class State : u8 {
+			SENT, ///< animation state on clients is up to date, nothing to do
+			NEEDS_RESEND, ///< animation has been started, emit AO_CMD_SET_ANIMATION
+			NEEDS_SPEED_RESEND, ///< speed has been changed, emit AO_CMD_SET_ANIMATION_SPEED
+			STOPPED, ///< animation has been stopped (not paused), emit AO_CMD_STOP_ANIMATION
+			         ///< @note animations can be paused by setting speed to 0
+		};
+		State state = State::NEEDS_RESEND;
+	};
+	struct Animation {
+		std::unordered_map<scene::TrackId, TrackAnimation> tracks;
+	};
+
+	UnitSAO(ServerEnvironment *env, v3f pos);
+	virtual ~UnitSAO() = default;
+
+	u16 getHP() const override { return m_hp; }
+	// Use a function, if isDead can be defined by other conditions
+	bool isDead() const { return m_hp == 0; }
+
+	// Rotation
+	void setRotation(v3f rotation) { m_rotation = rotation; }
+	void setRotation(v3f rotation, bool interpolate) {
+		m_rotation = rotation;
+		m_rotation_interpolate = interpolate;
+	}
+	const v3f &getRotation() const { return m_rotation; }
+	core::quaternion getTotalRotation() const;
+	v3f getRadRotation() { return m_rotation * core::DEGTORAD; }
+
+	// Deprecated
+	f32 getRadYawDep() const { return (m_rotation.Y + 90.) * core::DEGTORAD; }
+
+	// Armor groups
+	inline bool isImmortal() const
+	{
+		return itemgroup_get(getArmorGroups(), "immortal");
+	}
+	void setArmorGroups(const ItemGroupList &armor_groups) override;
+	const ItemGroupList &getArmorGroups() const override;
+
+	// Animation
+	void setAnimation(const scene::TrackId &track, scene::TrackAnimSpec anim_spec) override;
+	void stopAnimation(const scene::TrackId &track) override;
+	std::optional<scene::TrackAnimSpec> getAnimation(const scene::TrackId &track) const override;
+	std::vector<std::pair<scene::TrackId, scene::TrackAnimSpec>>
+	getAllAnimations() const override;
+	void setAnimationSpeed(const scene::TrackId &track, f32 fps) override;
+	const Animation &getAnimation() const { return m_animation; }
+
+	// Bone position
+	void setBoneOverride(const std::string &bone, const BoneOverride &props) override;
+	BoneOverride getBoneOverride(const std::string &bone) override;
+	const std::unordered_map<std::string, BoneOverride>
+			&getBoneOverrides() const override { return m_bone_override; };
+
+	// Attachments
+	ServerActiveObject *getParent() const override;
+	inline bool isAttached() const { return m_attachment_parent_id != 0; }
+	void setAttachment(object_t parent_id, const std::string &bone, v3f position,
+			v3f rotation, bool force_visible) override;
+	void getAttachment(object_t *parent_id, std::string *bone, v3f *position,
+			v3f *rotation, bool *force_visible) const override;
+	void clearChildAttachments() override;
+	void addAttachmentChild(object_t child_id) override;
+	void removeAttachmentChild(object_t child_id) override;
+	const std::unordered_set<object_t> &getAttachmentChildIds() const override {
+		return m_attachment_child_ids;
+	}
+
+	// Object properties
+	ObjectProperties *accessObjectProperties() override;
+	void notifyObjectPropertiesModified() override;
+	bool isAttachmentOutdated() const { return !m_attachment_sent; }
+	void sendOutdatedData();
+
+	// Update packets
+	std::string generateUpdateAttachmentCommand() const;
+	std::string generateUpdateAnimationSpeedCommand(const scene::TrackId &track) const;
+	std::string generateUpdateAnimationCommand(const scene::TrackId &track) const;
+	std::string generateStopAnimationCommand(const scene::TrackId &track) const;
+	std::string generateUpdateArmorGroupsCommand() const;
+	static std::string generateUpdatePositionCommand(const v3f &position,
+			const v3f &velocity, const v3f &acceleration, const v3f &rotation,
+			bool do_interpolate, bool is_movement_end, f32 update_interval,
+			bool do_interpolate_rotation = true);
+	std::string generateSetPropertiesCommand(const ObjectProperties &prop) const;
+	static std::string generateUpdateBoneOverrideCommand(
+			const std::string &bone, const BoneOverride &props);
+	void sendPunchCommand();
+
+protected:
+	u16 m_hp = 1;
+
+	v3f m_rotation;
+	f32 m_rotation_add_yaw = 0;
+	bool m_rotation_interpolate = true; // per-update flag for rotation interpolation
+
+	ItemGroupList m_armor_groups;
+
+	// Object properties
+	bool m_properties_sent = true;
+	ObjectProperties m_prop;
+
+	// Stores position and rotation for each bone name
+	std::unordered_map<std::string, BoneOverride> m_bone_override;
+
+	object_t m_attachment_parent_id = 0;
+
+	void clearAnyAttachments();
+	virtual void onMarkedForDeactivation() override {
+		ServerActiveObject::onMarkedForDeactivation();
+		clearAnyAttachments();
+	}
+	virtual void onMarkedForRemoval() override {
+		ServerActiveObject::onMarkedForRemoval();
+		clearAnyAttachments();
+	}
+
+private:
+	void onAttach(ServerActiveObject *parent);
+	void onDetach(ServerActiveObject *parent);
+
+	std::string generatePunchCommand(u16 result_hp) const;
+
+	// Used to detect nested calls to setAttachments(), which can happen due to
+	// Lua callbacks
+	u8 m_attachment_call_counter = 0;
+
+	// Armor groups
+	bool m_armor_groups_sent = false;
+
+	// Animation
+	Animation m_animation;
+
+	// Bone positions
+	bool m_bone_override_sent = false;
+
+	// Attachments
+	std::unordered_set<object_t> m_attachment_child_ids;
+	std::string m_attachment_bone = "";
+	v3f m_attachment_position;
+	v3f m_attachment_rotation;
+	bool m_attachment_sent = false;
+	bool m_force_visible = false;
+};
