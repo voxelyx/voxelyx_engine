@@ -333,7 +333,7 @@ public:
 	const Address &getAddress() const { return m_addr; }
 
 	/*
-		Multiworld: forget everything that is bound to the world the client
+		Forget everything that is bound to the world the client
 		was in and put it into the state right before TOSERVER_CLIENT_READY.
 		Used when a client is handed over to another world.
 	*/
@@ -482,11 +482,11 @@ public:
 	void DeleteClient(session_t peer_id);
 
 	/*
-		Multiworld: remove a client without deleting it, so it can be attached
+		Remove a client without deleting it, so it can be attached
 		to the ClientInterface of another world. Does not touch the connection.
 	*/
 	std::unique_ptr<RemoteClient> detachClient(session_t peer_id);
-	/* Multiworld: counterpart of detachClient() */
+	/* Counterpart of detachClient() */
 	void attachClient(std::unique_ptr<RemoteClient> client);
 
 	/* create client */

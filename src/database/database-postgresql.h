@@ -7,6 +7,7 @@
 #include <string>
 #include <libpq-fe.h>
 #include "database.h"
+#include "exceptions.h"
 
 // Template class for PostgreSQL based data storage
 class Database_PostgreSQL : public Database
@@ -73,6 +74,11 @@ protected:
 
 	void createTableIfNotExists(const std::string &table_name, const std::string &definition);
 
+	// Runs SQL without parameters (it can be several statements)
+	void execSimple(const char *sql);
+	// Same, for a query. The caller has to PQclear() the result.
+	PGresult *execQuery(const char *sql);
+
 	// Database initialization
 	void connectToDatabase();
 	virtual void createDatabase() = 0;
@@ -121,10 +127,50 @@ protected:
 	virtual void initStatements();
 };
 
-class PlayerDatabasePostgreSQL : private Database_PostgreSQL, public PlayerDatabase
+/*
+	Base of the classes that use the accounts database. The schema is the same
+	as that of accounts.sqlite, see AccountsDatabase_SQLite3 in database-sqlite3.h.
+*/
+class AccountsDatabase_PostgreSQL : public Database_PostgreSQL
 {
 public:
-	PlayerDatabasePostgreSQL(const std::string &connect_string);
+	// Bumped with every change of the schema
+	static constexpr int SCHEMA_VERSION = 1;
+
+protected:
+	AccountsDatabase_PostgreSQL(const std::string &connect_string);
+
+	void createDatabase() override;
+	// To be called by initStatements() of the derived classes
+	void initAccountStatements();
+
+	// The id of an account, 0 if there isn't one
+	u64 getAccountId(const std::string &name);
+
+	// Runs f() in a transaction. If it throws, the transaction is abandoned.
+	template <typename F>
+	void transaction(F &&f)
+	{
+		beginSave();
+		try {
+			f();
+		} catch (...) {
+			try {
+				rollback();
+			} catch (const DatabaseException &) {
+			}
+			throw;
+		}
+		endSave();
+	}
+};
+
+class PlayerDatabasePostgreSQL : private AccountsDatabase_PostgreSQL, public PlayerDatabase
+{
+public:
+	/// @param world_id the world whose players this is about, it must have been
+	///        registered with AuthDatabase::registerWorld()
+	PlayerDatabasePostgreSQL(const std::string &connect_string, u32 world_id);
 	virtual ~PlayerDatabasePostgreSQL() = default;
 
 	void savePlayer(RemotePlayer *player);
@@ -135,14 +181,15 @@ public:
 	PARENT_CLASS_FUNCS
 
 protected:
-	virtual void createDatabase();
 	virtual void initStatements();
 
 private:
-	bool playerDataExists(const std::string &playername);
+	void provisionAccount(const std::string &name);
+
+	const u32 m_world_id;
 };
 
-class AuthDatabasePostgreSQL : private Database_PostgreSQL, public AuthDatabase
+class AuthDatabasePostgreSQL : private AccountsDatabase_PostgreSQL, public AuthDatabase
 {
 public:
 	AuthDatabasePostgreSQL(const std::string &connect_string);
@@ -155,10 +202,14 @@ public:
 	virtual void listNames(std::vector<std::string> &res);
 	virtual void reload();
 
+	virtual void registerWorld(u32 world_id, const std::string &name);
+	virtual void deleteWorld(u32 world_id);
+	virtual bool getCurrentWorld(const std::string &name, u32 *world_id);
+	virtual void setCurrentWorld(const std::string &name, u32 world_id);
+
 	PARENT_CLASS_FUNCS
 
 protected:
-	virtual void createDatabase();
 	virtual void initStatements();
 
 private:

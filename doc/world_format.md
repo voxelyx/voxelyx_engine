@@ -1,12 +1,7 @@
-# Voxelyx World Format 22...29
+# Voxelyx World Format
 
-This applies to a world format carrying the block serialization version
-22...27, used at least in
-* `0.4.dev-20120322` ... `0.4.dev-20120606` (22...23)
-* `0.4.0` (23)
-* 24 was never released as stable and existed for ~2 days
-* 27 was added in `0.4.15-dev`
-* 29 was added in `5.5.0-dev`
+This describes the format of a world whose blocks have the serialization
+version 22...29.
 
 The block serialization version does not fully specify every aspect of this
 format; if compliance with this format is to be checked, it needs to be
@@ -17,84 +12,58 @@ done by detecting if the files and data indeed follows it.
 Everything is contained in a directory, the name of which is freeform, but
 often serves as the name of the world.
 
-Currently, the authentication and ban data is stored on a per-world basis.
-It can be copied over from an old world to a newly created world.
+The accounts and the state of the players are not in the world directory of a
+server that runs several worlds, they are in the user directory (see
+[Worlds on a server](#worlds-on-a-server)). A world that is run on its own
+(e.g. in singleplayer) keeps `accounts.sqlite` in its directory. The ban data is stored on a per-world basis. It can be copied over
+from an old world to a newly created world.
 
     World
-    ├── auth.txt ───── Authentication data
-    ├── auth.sqlite ── Authentication data (SQLite alternative)
-    ├── env_meta.txt ─ Environment metadata
-    ├── ipban.txt ──── Banned IPs/users
-    ├── map_meta.txt ─ Map metadata
-    ├── map.sqlite ─── Map data
-    ├── players ────── Player directory
-    │   │── player1 ── Player file
-    │   └── Foo ────── Player file
-    └── world.conf ───── World metadata
+    ├── accounts.sqlite ─ Accounts and players (only a world run on its own)
+    ├── env_meta.txt ──── Environment metadata
+    ├── ipban.txt ─────── Banned IPs/users
+    ├── map_meta.txt ──── Map metadata
+    ├── map.sqlite ────── Map data
+    └── world.conf ────── World metadata
 
-## `auth.txt`
+## `accounts.sqlite`
 
-Contains authentication data, one player per line.
+Contains the accounts and, for each world, the state of the players in it: who
+they are, how they log in, what they may do, which world they are in, and where
+they are in each world, their health, inventory and metadata.
+Set `auth_backend` in main.conf to choose where this is kept (`sqlite3`,
+`postgresql`, or `dummy` for nothing at all). The PostgreSQL database has
+the same tables.
 
-    <name>:<password hash>:<privilege1,...>
+The schema is versioned (`PRAGMA user_version`, currently 1). Times are Unix
+time stamps (UTC) in INTEGER columns. Foreign keys are enforced, and what is
+owned by a row goes with it (`ON DELETE CASCADE`):
 
-Legacy format (until 0.4.12) of password hash is `<name><password>` SHA1'd,
-in base64.
+| Table | One row for | Columns |
+|---|---|---|
+| `worlds` | a world | `id` (the `world_id` of world.conf), `name` (informational) |
+| `accounts` | an account | `id`, `name` (unique), `password`, `created_at`, `last_login` (NULL: never), `current_world_id` |
+| `privileges` | a privilege of an account | `account_id`, `privilege` (together the key) |
+| `world_players` | an account in a world | `id`, `account_id`, `world_id` (unique together), `pitch`, `yaw`, `pos_x`, `pos_y`, `pos_z`, `hp`, `breath`, `created_at`, `updated_at` |
+| `world_player_metadata` | a key of such a player | `world_player_id`, `key`, `value` (bytes) |
+| `world_player_inventories` | an inventory list of such a player | `world_player_id`, `list_index`, `name`, `width`, `size` |
+| `world_player_inventory_items` | an occupied slot of such a list | `world_player_id`, `list_index`, `slot`, `item` (a serialized item stack) |
 
-Format (since 0.4.13) of password hash is `#1#<salt>#<verifier>`, with the
-parts inside `<>` encoded in base64.
-
-`<verifier>` is an RFC 2945 compatible SRP verifier,
-of the given salt, password, and the player's name lowercased,
-using the 2048-bit group specified in RFC 5054 and the SHA-256 hash function.
-
-Example lines:
-* Player "celeron55", no password, privileges "interact" and "shout":
-    ```
-    celeron55::interact,shout
-    ```
-* Player "Foo", password "bar", privilege "shout", with a legacy password hash:
-    ```
-    foo:iEPX+SQWIR3p67lj/0zigSWTKHg:shout
-    ```
-* Player "Foo", password "bar", privilege "shout", with a 0.4.13 password hash:
-    ```
-    foo:#1#hPpy4O3IAn1hsNK00A6wNw#Kpu6rj7McsrPCt4euTb5RA5ltF7wdcWGoYMcRngwDi11cZhPuuR9i5Bo7o6A877TgcEwoc//HNrj9EjR/CGjdyTFmNhiermZOADvd8eu32FYK1kf7RMC0rXWxCenYuOQCG4WF9mMGiyTPxC63VAjAMuc1nCZzmy6D9zt0SIKxOmteI75pAEAIee2hx4OkSXRIiU4Zrxo1Xf7QFxkMY4x77vgaPcvfmuzom0y/fU1EdSnZeopGPvzMpFx80ODFx1P34R52nmVl0W8h4GNo0k8ZiWtRCdrJxs8xIg7z5P1h3Th/BJ0lwexpdK8sQZWng8xaO5ElthNuhO8UQx1l6FgEA:shout
-    ```
-* Player "bar", no password, no privileges:
-    ```
-    bar::
-    ```
-
-## `auth.sqlite`
-
-Contains authentication data as an SQLite database. This replaces auth.txt
-above when `auth_backend` is set to `sqlite3` in world.conf.
-
-This database contains two tables: `auth` and `user_privileges`:
-
-```sql
-CREATE TABLE `auth` (
-    `id` INTEGER PRIMARY KEY AUTOINCREMENT,
-    `name` VARCHAR(32) UNIQUE,
-    `password` VARCHAR(512),
-    `last_login` INTEGER
-);
-CREATE TABLE `user_privileges` (
-    `id` INTEGER,
-    `privilege` VARCHAR(32),
-    PRIMARY KEY (id, privilege),
-    CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES auth (id) ON DELETE CASCADE
-);
-```
-
-The `name` and `password` fields of the auth table are the same as the auth.txt
-fields (with modern password hash). The `last_login` field is the last login
-time as a Unix time stamp.
-
-The `user_privileges` table contains one entry per privilege and player.
-A player with "interact" and "shout" privileges will have two entries, one
-with `privilege="interact"` and the second with `privilege="shout"`.
+* `accounts.password` is `#1#<salt>#<verifier>` with the parts inside `<>` in
+  base64. `<verifier>` is an RFC 2945 compatible SRP verifier of the given salt,
+  password, and the player's name lowercased, using the 2048-bit group specified
+  in RFC 5054 and the SHA-256 hash function. An empty password is an account
+  without one. `!` is an account that can't be logged into with the built-in
+  authentication handler: it is made for a player that a mod's own
+  authentication handler lets in, so that there is a place for their state.
+* `accounts.current_world_id` is the world a player is in, or last was in. It
+  is where they log in the next time. It is NULL if there is none yet or the
+  world was deleted.
+* Deleting an account deletes its privileges and its players in every world.
+  Deleting a world deletes the players in it. This is all done by the database.
+* Only the inventory slots that hold something have a row.
+* `world_players.pitch`/`yaw` are in degrees, the position is that of the
+  player's feet in node coordinates (not scaled by BS).
 
 ## `env_meta.txt`
 
@@ -130,14 +99,6 @@ Map data.
 
 See [Map File Format](#map-file-format) below.
 
-## `player1`, `Foo`
-
-Player data.
-
-Filename can be anything.
-
-See [Player File Format](#player-file-format) below.
-
 ## `world.conf`
 
 World metadata, in the same format as `main.conf`. This file is created and
@@ -162,7 +123,6 @@ content. The convention is `<modname>.<setting>`.
     enable_damage = true          - optional, overrides enable_damage of main.conf in this world
     creative_mode = false         - optional, overrides creative_mode of main.conf in this world
     backend = sqlite3             - which DB backend to use for blocks (sqlite3, dummy, leveldb, redis, postgresql)
-    player_backend = sqlite3      - which DB backend to use for player data
     readonly_backend = sqlite3    - optionally read-only seed DB (DB file _must_ be located in "readonly" subfolder)
     mod_storage_backend = sqlite3 - which DB backend to use for mod storage
     blocksize = 32                - mapblock size, only written if it's non-standard (16)
@@ -170,8 +130,6 @@ content. The convention is `<modname>.<setting>`.
 `PostgreSQL` backend specific settings:
 
     pgsql_connection = host=127.0.0.1 port=5432 user=mt_user password=mt_password dbname=voxelyx
-    pgsql_player_connection = (same parameters as above)
-    pgsql_auth_connection = (same parameters as above)
     pgsql_mod_storage_connection = (same parameters as above)
 
 `Redis` backend specific settings:
@@ -181,72 +139,214 @@ content. The convention is `<modname>.<setting>`.
     redis_port = 6379          - (optional) Connection port
     redis_password = hunter2   - (optional) Server password
 
-# Player File Format
+# Worlds on a server
 
-Should be pretty self-explanatory.
-> **Note**: Position is in `nodes * 10`
+A dedicated server runs **all worlds in the `worlds` directory at the same
+time**. Each world is stepped on its own thread with its own Lua state, so they
+run in parallel. Players can play in different worlds concurrently and be moved
+between worlds without reconnecting. A server with one world works the same
+way. Singleplayer and the "Host Server" tab of the main menu run exactly one.
 
-Example content:
+```
+voxelyxserver                                  # runs all worlds
+voxelyxserver --world <default world>          # selects the default world for this run
+```
 
-    hp = 11
-    name = celeron55
-    pitch = 39.77
-    position = (-5231.97,15,1961.41)
-    version = 1
-    yaw = 101.37
-    PlayerArgsEnd
-    List main 32
-    Item default:torch 13
-    Item default:pick_steel 1 50112
-    Item experimental:tnt
-    Item default:cobble 99
-    Item default:pick_stone 1 13104
-    Item default:shovel_steel 1 51838
-    Item default:dirt 61
-    Item default:rail 78
-    Item default:coal_lump 3
-    Item default:cobble 99
-    Item default:leaves 22
-    Item default:gravel 52
-    Item default:axe_steel 1 2045
-    Item default:cobble 98
-    Item default:sand 61
-    Item default:water_source 94
-    Item default:glass 2
-    Item default:mossycobble
-    Item default:pick_steel 1 64428
-    Item animalmaterials:bone
-    Item default:sword_steel
-    Item default:sapling
-    Item default:sword_stone 1 10647
-    Item default:dirt 99
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    EndInventoryList
-    List craft 9
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    Empty
-    EndInventoryList
-    List craftpreview 1
-    Empty
-    EndInventoryList
-    List craftresult 1
-    Empty
-    EndInventoryList
-    EndInventory
+If there is no world yet, `worlds/main` is created. Worlds are managed with the
+`worlds` mod, one of the base mods. It provides the commands `/worlds`,
+`/world <ID or name>`, `/tpworld <player> <ID or name>` (or
+`<player> <W> <X> <Y> <Z>`), `/createworld` and `/removeworld`, and shares chat
+between worlds.
+
+## World IDs and coordinates
+
+Every world has a **name** (the folder in `worlds`) and an **ID**, a number that
+is unique on the server. The ID is written to the world's `world.conf` as
+`world_id` when the world is created: the first world gets 1, the next 2 and so
+on (one more than the highest ID there is, also counting removed worlds, so an
+ID is not given out twice). The default world, `main`, is normally the first
+one created and so has ID 1.
+
+A position on the server is written **(W, X, Y, Z)**, with W the world ID. The
+`pos` of the F5 debug text, the positions in the messages of chat commands and
+the `/teleport` command use it, e.g. `/teleport 2,0,10,0` moves you to 0,10,0 in
+world 2. Anywhere a world is asked for, the ID can be used instead of the name
+(`/world 2`, `core.transfer_player_to_world(player, 2)`), so a world name can't
+consist of digits only.
+
+A world without a valid `world_id` is skipped (the default world: the server
+doesn't start), and two worlds with the same ID make the server refuse to start.
+To copy a world folder in, change its `world_id` to an unused number.
+
+## Configuration
+
+Server settings are in `main.conf`, in the user directory or given with
+`--config`.
+
+| Setting                          | Meaning                                                                                    |
+|----------------------------------|--------------------------------------------------------------------------------------------|
+| `default_world`                  | Name of the world in which new players start. Created if it doesn't exist. Default: `main` |
+| `worlds_dir`                     | Directory with the worlds. Default: `<user dir>/worlds`                                    |
+| `world_list`                     | Comma separated list of worlds to run. Default: all that have a `world.conf`               |
+| `auth_backend`                   | Where the accounts and the players are kept: `sqlite3` (default), `postgresql`             |
+| `creative_mode`, `enable_damage` | For all worlds, unless a world overrides them                                              |
+
+`default_world` is added to `main.conf` when the server starts for the first
+time. `--world <path>` (or `--worldname`) selects the default world for this run
+instead. It doesn't have to be in the worlds directory, and it is created if it
+doesn't exist yet.
+
+`world.conf` only has what belongs to the world itself, see
+[`world.conf`](#worldconf). Everything about the server (accounts, announcing,
+mods ...) is in `main.conf`. In the Lua API, `core.get_world_setting(name)`
+returns the value of a setting for the current world: the one in its
+`world.conf`, else the one in `main.conf`.
+
+Seamless moves between two worlds need **identical content**: same nodes, items
+and media. This is the normal case, since all worlds run the same mods (see
+[Content groups](#content-groups)). Don't enable `random_mod_load_order`.
+`--terminal` is connected to the default world.
+
+## Creating and removing worlds while the server runs
+
+Mods can create and remove worlds without a restart, see `core.create_world()`
+and `core.remove_world()` in `lua_api.md`. The `worlds` mod exposes them as
+`/createworld <name>` and `/removeworld <ID or name> [delete]`, for players with
+the `world_manage` privilege.
+
+- A new world is made like the first one: with the server's settings
+  (`mg_name`, seed, ...) and mods. It is a folder in the worlds directory, so it
+  is also there after a restart.
+- Removing first moves the players of the world to the default world (those
+  whose client can't switch worlds on an open connection reconnect and arrive
+  there; anybody still left after 30 seconds is kicked). The world is then
+  stopped and saved. Its folder is moved to `<worlds dir>/.removed/<name>-<time>`,
+  or deleted with `delete`. The default world can't be removed.
+- Both happen in the background, other worlds keep running. Mods learn about the
+  result from `core.register_on_worlds_changed`.
+- Neither is possible while `world_list` fixes the list of worlds.
+
+## What belongs to the server and what to a world
+
+Worlds are separate, but the server has one set of mods, one set of accounts,
+one set of commands and one ban list.
+
+| Per world                                                                      | Server-wide                                            |
+|--------------------------------------------------------------------------------|--------------------------------------------------------|
+| Map, mapgen, seed, emerge threads                                              | Network port and connection                            |
+| Lua state                                                                      | **Mods**                                               |
+| Players' position and meta (inventory and health follow the player, see below) | **Accounts**: passwords, privileges, last login        |
+| Mod storage, `core.get_worldpath()`, ABMs, timers                              | **Chat commands and privileges** (defined by the mods) |
+| Chat, `core.get_connected_players()`                                           | The ban list (`<user dir>/ipban.txt`)                  |
+|                                                                                | `core.settings` / `main.conf`, `max_users`             |
+|                                                                                | The `core.ipc_*` store, mod data dir                   |
+
+**Mods** are server-wide. Every mod in the `mods` directory (`<user dir>/mods`,
+`<share dir>/mods`, `VOXELYX_MOD_PATH`) is loaded by all worlds, so all worlds
+register the same nodes, items, privileges and chat commands. To turn a mod off,
+set `load_mod_<name> = false` in `main.conf`.
+
+**Accounts** are the same everywhere: log in once, with the same password and
+the same privileges, in whichever world you are. Granting or revoking a
+privilege takes effect in all worlds right away. Commands registered by mods
+exist in every world. Administrative ones work on the whole server: `/kick` and
+`/ban` reach players in other worlds, `/status` lists everybody, `/grant` and
+`/revoke` need no world, `/tpworld` moves players whichever world they are in,
+and `max_users` is the limit for the whole server. Commands that are about the
+world one is in (`/time`, `/give`, `/clearobjects`, ...) act on that world.
+
+**Players:** apart from the account, a player has an independent position and
+meta in each world. The first time they enter a world they are a new player
+there (`on_newplayer`). The inventory and the health (HP and breath) go with the
+player: when they are moved from one world to another (also when they have to
+reconnect to get there), what they had on leaving replaces what the new world
+has. A player who is dead is not moved as a dead one, they keep the health the
+new world has. So items are never lost or duplicated by changing worlds.
+Logging out and in again doesn't move anything.
+
+`/remove_player` removes the player's data of the current world; removing the
+account (`core.remove_player_auth`) removes it for all worlds. The world a
+player is in is part of their account, and they log in there next time. A world
+that is removed with `/removeworld <world> delete` takes the players in it with
+it; one that is only moved away keeps them, and players who were in it log in to
+the default world until it is back. Remove worlds with `/removeworld` or
+`core.remove_world`, not by deleting the directory: the server then doesn't know
+the world is gone, and a new world that gets the same ID would start with the
+players of the old one.
+
+## Lua API
+
+See "Worlds" in `lua_api.md`: `core.get_world_id()`, `core.get_world_name()`,
+`core.get_worlds()`, `core.transfer_player_to_world()`, `core.send_to_world()`,
+`core.register_on_world_message()` and the extra arguments of `on_joinplayer` /
+`on_leaveplayer`.
+
+## How it works
+
+![One UDP socket feeds the ClusterReceive thread, which routes packets to the inbox of each world thread. Each world has its own Lua state, map, emerge threads and databases and sends directly to the socket. All worlds share the accounts database, ban list, main.conf and IPC store.](worlds-architecture.svg)
+
+- Every world is an ordinary `Server`. It gets a `WorldConnection` that looks
+  like its own connection but is fed by the `WorldCluster`. Sending goes straight
+  to the shared (thread-safe) connection. Worlds never wait for each other.
+- The accounts are one `SharedAuthDatabase`: a single database whose calls are
+  serialized by a mutex, used by all worlds. Nothing else is called while the
+  mutex is held. Each world has its own connection to the same file for its
+  players.
+- The first packet of a connection (`TOSERVER_INIT`) carries the player name. It
+  decides which world the connection starts in.
+- Cross-world actions are tasks posted to the target world and run on its own
+  thread under its environment lock. No lock spans two worlds. This is also how
+  privilege changes, kicks and bans reach the world a player is in.
+
+### Moving a player
+
+1. A mod calls `core.transfer_player_to_world`. The request is validated and
+   posted to the world the player is in.
+2. That world runs `on_leaveplayer`, saves and removes the player, and detaches
+   the connection state from its client list. The network connection stays open.
+3. Packets of that connection are re-routed to the target world, which attaches
+   the client and sends `TOCLIENT_WORLD_CHANGE`.
+4. The client drops everything that belongs to the old world (map, objects,
+   particles, sounds, HUD) and answers with `TOSERVER_CLIENT_READY`, as at the
+   end of joining.
+5. The target world runs the normal join sequence: loads or creates the player,
+   applies the requested position, resends sky/HUD/lighting state, runs
+   `on_joinplayer`.
+
+If the player disconnects at any point the half-moved client is discarded; the
+player's data was already saved by the source world.
+
+### Content groups
+
+Map blocks refer to nodes by content ID, so a client can only keep its
+definitions when the new world agrees on them. The server therefore
+
+- assigns node content IDs through a registry shared by all worlds, so a node
+  name has the same ID in every world, even though Lua loads nodes in a
+  different order in each state, and
+- hashes the node definitions, item definitions and media of each world at
+  startup. Worlds with equal hashes form a content group, and only inside a
+  group are seamless moves possible.
+
+Since all worlds run the same mods, they normally form a single group, unless a
+mod registers things depending on the world it runs in. For anything else, and
+for clients that don't support world changes, the player is asked to reconnect
+and will arrive in the target world. The requested position is not kept in that
+case.
+
+## Limitations
+
+- One fatal error (e.g. an uncaught Lua error) in any world stops the whole
+  server. A shutdown request from any world shuts down all.
+- `core.get_connected_players()`, `core.get_player_by_name()` and chat only see
+  the world they are called in. Private messages (`/msg`) work within a world;
+  the `worlds` mod shares normal chat between worlds.
+- Privilege changes are read-modify-write on the account. Two worlds changing
+  the privileges of the same player at the same instant can lose one change.
+- `core.dynamic_add_media` files are not shared between worlds.
+- Minimap modes set by mods are not re-sent when entering a world.
+- The `--recompress` option works on one world, the one selected with `--world`.
+- Worlds are loaded one after another at startup (mod loading isn't parallel).
 
 # Map File Format
 
@@ -254,32 +354,6 @@ Voxelyx maps consist of `MapBlock`s, each holds 16x16x16 nodes.
 
 In addition to the bulk node data, `MapBlock`s stored on disk also contain
 other things.
-
-## History
-
-Initially, Voxelyx stored maps in a format called the "sectors" format.
-It was a directory/file structure like this:
-
-    sectors2/XXX/ZZZ/YYYY
-
-For example, the `MapBlock` at `(0, 1, -2)` was this file:
-
-    sectors2/000/ffd/0001
-
-Eventually Voxelyx outgrew this directory structure, as filesystems were
-struggling under the number of files and directories.
-
-Large servers seriously needed a new format, and thus the base of the
-current format was invented, suggested by celeron55 and implemented by
-JacobF.
-
-`SQLite3` was implemented. Blocks files were directly inserted as blobs
-in a single table, indexed by integer primary keys, which were hashed
-coordinates.
-
-Today, we know that `SQLite3` allows multiple primary keys (which would allow
-storing coordinates separately), but the format has been kept unchanged for
-that part.
 
 ## `map.sqlite`
 `map.sqlite` is an `SQLite3` database, containing a single table, called

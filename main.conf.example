@@ -9,9 +9,6 @@
 #    Any other path can be chosen by passing the path as a parameter
 #    to the program, eg. "voxelyx.exe --config ../main.conf.example".
 
-#    Further documentation:
-#    https://docs.luanti.org/
-
 #
 # Controls
 #
@@ -81,396 +78,318 @@
 ## Actions and Keybindings
 
 #    Move forward
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_forward = SYSTEM_SCANCODE_26|GAMEPAD_AXIS_MINUS_1
 
 #    Will also disable autoforward, when active.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_backward = SYSTEM_SCANCODE_22|GAMEPAD_AXIS_PLUS_1
 
 #    Move left
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_left = SYSTEM_SCANCODE_4|GAMEPAD_AXIS_MINUS_0
 
 #    Move right
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_right = SYSTEM_SCANCODE_7|GAMEPAD_AXIS_PLUS_0
 
 #    Jump
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_jump = SYSTEM_SCANCODE_44|GAMEPAD_BUTTON_0
 
 #    Also used for climbing down and descending in water if aux1_descends is disabled.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_sneak = SYSTEM_SCANCODE_225|GAMEPAD_BUTTON_1
 
 #    Key for digging, punching or using something.
 #    (Note: The actual meaning might vary on a per-game basis.)
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_dig = KEY_LBUTTON|GAMEPAD_AXIS_PLUS_5
 
 #    Key for placing an item/block or for using something.
 #    (Note: The actual meaning might vary on a per-game basis.)
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_place = KEY_RBUTTON|GAMEPAD_AXIS_PLUS_4
 
 #    Open inventory
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_inventory = SYSTEM_SCANCODE_12|GAMEPAD_BUTTON_3
 
 #    Key for opening the pause menu in-game.
 #    Pressing the escape key always opens the pause menu.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_pause = GAMEPAD_BUTTON_6
 
 #    Key for moving fast in fast mode.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_aux1 = SYSTEM_SCANCODE_8|GAMEPAD_BUTTON_2
 
 #    Open chat
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_chat = SYSTEM_SCANCODE_23
 
 #    Key for opening the chat window to type commands.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_cmd = SYSTEM_SCANCODE_56
 
 #    Key for opening the chat window to type local commands.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_cmd_local = SYSTEM_SCANCODE_55
 
 #    Toggle unlimited view range
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_rangeselect =
 
 #    Toggle fly
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_freemove = SYSTEM_SCANCODE_14|GAMEPAD_BUTTON_13
 
 #    Toggle pitchmove
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_pitchmove =
 
 #    Toggle fast
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_fastmove = SYSTEM_SCANCODE_13
 
 #    Toggle noclip
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_noclip = SYSTEM_SCANCODE_11
 
 #    Hotbar: select next item
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_hotbar_next = SYSTEM_SCANCODE_17|GAMEPAD_BUTTON_10
 
 #    Hotbar: select previous item
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_hotbar_previous = SYSTEM_SCANCODE_5|GAMEPAD_BUTTON_9
 
 #    Mute
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_mute = SYSTEM_SCANCODE_16
 
 #    Increase volume
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_increase_volume =
 
 #    Decrease volume
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_decrease_volume =
 
 #    Toggle automatic forward
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_autoforward =
 
 #    Toggle cinematic mode
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_cinematic =
 
 #    Toggle minimap
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_minimap = SYSTEM_SCANCODE_25|GAMEPAD_BUTTON_4
 
 #    Screenshot
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_screenshot = SYSTEM_SCANCODE_69|GAMEPAD_BUTTON_14
 
 #    Toggle fullscreen
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_fullscreen = SYSTEM_SCANCODE_68
 
 #    Drop item
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_drop = SYSTEM_SCANCODE_20|GAMEPAD_BUTTON_12
 
 #    Zoom
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_zoom = SYSTEM_SCANCODE_29|GAMEPAD_BUTTON_11
 
 #    Look left
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_camera_yaw_left = GAMEPAD_AXIS_MINUS_2
 
 #    Look right
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_camera_yaw_right = GAMEPAD_AXIS_PLUS_2
 
 #    Look up
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_camera_pitch_up = GAMEPAD_AXIS_MINUS_3
 
 #    Look down
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_camera_pitch_down = GAMEPAD_AXIS_PLUS_3
 
 #    Toggle HUD
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_hud = SYSTEM_SCANCODE_58
 
 #    Toggle chat log
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_chat = SYSTEM_SCANCODE_59
 
 #    Toggle large chat console
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_console = SYSTEM_SCANCODE_67
 
 #    Toggle fog
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_fog = SYSTEM_SCANCODE_60
 
 #    Toggle debug info
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_debug = SYSTEM_SCANCODE_62
 
 #    Key for toggling the display of the profiler. Used for development.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_profiler = SYSTEM_SCANCODE_63
 
 #    Key for toggling the display of mapblock boundaries.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_block_bounds =
 
 #    Toggle camera mode
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_camera_mode = SYSTEM_SCANCODE_6
 
 #    Increase view range
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_increase_viewing_range_min = SYSTEM_SCANCODE_46
 
 #    Decrease view range
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_decrease_viewing_range_min = SYSTEM_SCANCODE_45
 
 #    Modifier key bind for closing your world.
 #    Requires ESC + the selected key to work.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_close_world =
 
 #    Hotbar slot 1
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot1 = SYSTEM_SCANCODE_30
 
 #    Hotbar slot 2
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot2 = SYSTEM_SCANCODE_31
 
 #    Hotbar slot 3
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot3 = SYSTEM_SCANCODE_32
 
 #    Hotbar slot 4
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot4 = SYSTEM_SCANCODE_33
 
 #    Hotbar slot 5
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot5 = SYSTEM_SCANCODE_34
 
 #    Hotbar slot 6
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot6 = SYSTEM_SCANCODE_35
 
 #    Hotbar slot 7
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot7 = SYSTEM_SCANCODE_36
 
 #    Hotbar slot 8
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot8 = SYSTEM_SCANCODE_37
 
 #    Hotbar slot 9
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot9 = SYSTEM_SCANCODE_38
 
 #    Hotbar slot 10
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot10 = SYSTEM_SCANCODE_39
 
 #    Hotbar slot 11
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot11 =
 
 #    Hotbar slot 12
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot12 =
 
 #    Hotbar slot 13
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot13 =
 
 #    Hotbar slot 14
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot14 =
 
 #    Hotbar slot 15
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot15 =
 
 #    Hotbar slot 16
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot16 =
 
 #    Hotbar slot 17
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot17 =
 
 #    Hotbar slot 18
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot18 =
 
 #    Hotbar slot 19
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot19 =
 
 #    Hotbar slot 20
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot20 =
 
 #    Hotbar slot 21
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot21 =
 
 #    Hotbar slot 22
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot22 =
 
 #    Hotbar slot 23
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot23 =
 
 #    Hotbar slot 24
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot24 =
 
 #    Hotbar slot 25
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot25 =
 
 #    Hotbar slot 26
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot26 =
 
 #    Hotbar slot 27
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot27 =
 
 #    Hotbar slot 28
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot28 =
 
 #    Hotbar slot 29
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot29 =
 
 #    Hotbar slot 30
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot30 =
 
 #    Hotbar slot 31
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot31 =
 
 #    Hotbar slot 32
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_slot32 =
 
@@ -1167,7 +1086,7 @@
 #    URL to JSON file which provides information about the newest Voxelyx release.
 #    If this is empty the engine will never check for updates.
 #    type: string
-# update_information_url = https://www.luanti.org/release_info.json
+# update_information_url =
 
 ## Server
 
@@ -3643,27 +3562,22 @@
 ### Client Debugging
 
 #    Key for toggling the camera update. Only usable with 'debug' privilege.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_toggle_update_camera =
 
 #    Key for switching to the previous entry in Quicktune.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_quicktune_prev =
 
 #    Key for switching to the next entry in Quicktune.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_quicktune_next =
 
 #    Key for decrementing the selected value in Quicktune.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_quicktune_dec =
 
 #    Key for incrementing the selected value in Quicktune.
-#    See https://docs.luanti.org/for-players/controls/
 #    type: key
 # keymap_quicktune_inc =
 

@@ -30,7 +30,6 @@ If in doubt, please report a potential issue privately so we can triage it.
 We ask that you report vulnerabilities privately first:
 
 * [Report a vulnerability on GitHub](https://github.com/voxelyx/voxelyx_engine/security/advisories/new)
-* or email [security@luanti.org](mailto:security@luanti.org)
 
 Depending on severity, we will either create a private issue for the vulnerability
 or give you permission to file the issue publicly.

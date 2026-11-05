@@ -14,7 +14,7 @@
 	A world's view on the cluster's single UDP connection.
 
 	Every world's Server instance expects to own an IConnection that it
-	receives from and sends through. In a multiworld cluster the real
+	receives from and sends through. In a WorldCluster the real
 	connection is shared; the WorldCluster demultiplexes incoming packets by
 	peer and pushes them into the inbox of the world that currently owns the
 	peer. Outgoing traffic goes straight to the real connection (which is

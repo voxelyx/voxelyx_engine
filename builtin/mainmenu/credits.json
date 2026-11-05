@@ -1,5 +1,4 @@
 {
-	"#": "https://github.com/orgs/luanti-org/teams/engine/members",
 	"core_developers": [
 		"Perttu Ahola (celeron55) <celeron55@gmail.com> [Project founder]",
 		"sfan5 <sfan5@live.de>",
@@ -39,7 +38,6 @@
 		"Hugues Ross <hugues.ross@gmail.com>",
 		"Dmitry Kostenko (x2048) <codeforsmile@gmail.com>"
 	],
-	"#": "Currently only https://github.com/orgs/luanti-org/teams/triagers/members",
 	"core_team": [
 		"Zughy [Issue triager]",
 		"wsor [Issue triager]",

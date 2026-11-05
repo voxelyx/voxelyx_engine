@@ -1,4 +1,15 @@
 
+Origin and changes
+-------------------
+
+Voxelyx is derived from Luanti (formerly Minetest),
+https://github.com/luanti-org/luanti, which is licensed under the GNU Lesser
+General Public License version 2.1 or later (see COPYING.LESSER).
+
+The source files that come from it keep the copyright notices of their authors.
+Those files have been modified by the Voxelyx authors; the modifications date
+from 2026 and are recorded in the version control history.
+
 License of Voxelyx textures and sounds
 ---------------------------------------
 

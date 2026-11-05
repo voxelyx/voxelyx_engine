@@ -925,7 +925,6 @@ double perf_freq = get_perf_freq();
  * This appears to be a combination of unfortunate allocation order/fragmentation
  * and the fact that glibc does not call madvise(MADV_DONTNEED) on its own.
  * Some other allocators were also affected, jemalloc and musl libc were not.
- * read more: <https://forum.luanti.org/viewtopic.php?t=30509>
  *
  * As a workaround we track freed memory coarsely and call malloc_trim() once a
  * certain amount is reached.

@@ -52,6 +52,26 @@ public:
 		std::lock_guard<std::mutex> lock(m_mutex);
 		m_inner->reload();
 	}
+	void registerWorld(u32 world_id, const std::string &name) override
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_inner->registerWorld(world_id, name);
+	}
+	void deleteWorld(u32 world_id) override
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_inner->deleteWorld(world_id);
+	}
+	bool getCurrentWorld(const std::string &name, u32 *world_id) override
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		return m_inner->getCurrentWorld(name, world_id);
+	}
+	void setCurrentWorld(const std::string &name, u32 world_id) override
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_inner->setCurrentWorld(name, world_id);
+	}
 
 private:
 	std::mutex m_mutex;

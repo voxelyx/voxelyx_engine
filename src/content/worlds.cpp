@@ -13,7 +13,7 @@
 #include "map_settings_manager.h"
 #include "util/string.h"
 #include "exceptions.h"
-#include "multiworld/server_config.h"
+#include "worlds/server_config.h"
 
 // The maximum number of identical world names allowed
 #define MAX_WORLD_NAMES 100
@@ -161,7 +161,6 @@ void initWorld(const std::string &path, const std::string &name, bool create_wor
 
 		conf.set("backend", "sqlite3");
 
-		conf.set("player_backend", "sqlite3");
 		conf.set("mod_storage_backend", "sqlite3");
 		if (MAP_BLOCKSIZE != 16)
 			conf.set("blocksize", std::to_string(MAP_BLOCKSIZE));

@@ -235,7 +235,7 @@ public:
 	void sendDamage(u16 damage);
 	void sendRespawnLegacy();
 	void sendReady();
-	// Drops everything that belongs to the world we were in (multiworld servers)
+	// Drops everything that belongs to the world we were in (servers with several worlds)
 	void resetWorldState();
 	void sendHaveMedia(const std::vector<u32> &tokens);
 	void sendUpdateClientInfo(const ClientDynamicInfo &info);

@@ -23,7 +23,8 @@ class WorldConnection;
 
 	- world_id             unique number of the world, 1 for the first one
 	- world_name           display name
-	- backend, player_backend, mod_storage_backend   how its data is stored
+	- backend, mod_storage_backend   how its data is stored. (The players in
+	                       it are in the accounts database, see database.h.)
 	- static_spawnpoint    where players start (x, y, z in nodes). Chosen when
 	                       the world is first started.
 	- creative_mode, enable_damage    optional, they override the values of

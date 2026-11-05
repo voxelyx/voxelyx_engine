@@ -2,13 +2,7 @@ Voxelyx Lua Modding API Reference
 ================================
 
 All functions and tables of the API are in the `core` namespace (e.g.
-`core.register_node`). There are no other namespaces: neither `minetest` nor
-`voxelyx` exist.
-
-* More information at <http://www.luanti.org/>
-* Additional documentation: <https://docs.luanti.org/>
-* (Unofficial) Voxelyx Modding Book by rubenwardy: <https://rubenwardy.com/minetest_modding_book/>
-* Modding tools: <https://github.com/luanti-org/modtools>
+`core.register_node`). There are no other namespaces.
 
 Introduction
 ------------
@@ -319,8 +313,7 @@ Many glTF features are not supported *yet*, including:
   * Backface culling is overridden
   * Double-sided materials don't work
 * Alternative means of supplying data
-  * Embedded images. You can use `gltfutil.py` from the
-    [modding tools](https://github.com/luanti-org/modtools) to strip or extract embedded images.
+  * Embedded images. Strip or extract them with a glTF tool.
   * References to files via URIs (e.g. `.bin` binary data buffers).
     Buffers need to be embedded base64-encoded, or you can use `.glb` files.
 
@@ -4803,10 +4796,6 @@ Using the earlier example of greeting the player, the translation file would be
 Hello @1, how are you today?=Hallo @1, wie geht es dir heute?
 ```
 
-For old translation files, consider using the script `mod_translation_updater.py`
-in the Voxelyx [modtools](https://github.com/luanti-org/modtools) repository to
-generate and update translation files automatically from the Lua sources.
-
 Gettext translation file format
 -------------------------------
 
@@ -6574,19 +6563,19 @@ Call these functions only at load time!
 * `core.register_on_joinplayer(function(ObjectRef, last_login, from_world))`
     * Called when a player joins the game
     * `last_login`: The timestamp of the previous login, or nil if player is new
-    * `from_world`: Only on dedicated servers (see [multiworld.md](multiworld.md)):
+    * `from_world`: Only on dedicated servers (see [world_format.md](world_format.md#worlds-on-a-server)):
       the name of the world the player came from, if they were moved here from
       another world instead of connecting. Otherwise nil.
 * `core.register_on_leaveplayer(function(ObjectRef, timed_out, to_world))`
     * Called when a player leaves the game
     * Does not get executed for connected players on shutdown.
     * `timed_out`: True for timeout, false for other reasons.
-    * `to_world`: Only on dedicated servers (see [multiworld.md](multiworld.md)):
+    * `to_world`: Only on dedicated servers (see [world_format.md](world_format.md#worlds-on-a-server)):
       the name of the world the player is moved to, if they didn't disconnect.
       Otherwise nil.
 * `core.register_on_world_message(function(from_world, channel, message))`
     * Called when a mod in another world calls `core.send_to_world`
-      (see "Multiworld" below)
+      (see "Worlds" below)
 * `core.register_on_authplayer(function(name, ip, is_success))`
     * Called when a client attempts to log into an account.
     * `name`: The name of the account being authenticated.
@@ -8037,11 +8026,11 @@ Storage API
     * returns reference to mod private `StorageRef`
     * must be called during mod load time
 
-Multiworld
-----------
+Worlds
+------
 
 A dedicated server runs all worlds of its `worlds` directory at the same time,
-each with its own Lua state and thread (see [multiworld.md](multiworld.md)).
+each with its own Lua state and thread (see [world_format.md](world_format.md#worlds-on-a-server)).
 Every world is a complete game of its own: `core.get_connected_players()`,
 `core.set_node`, `core.get_worldpath()`, mod storage, ABMs, etc. always refer
 to the world the calling mod runs in.
@@ -8081,7 +8070,7 @@ singleplayer and client-hosted servers, which have exactly one world.
       `from_world`.
     * The player's inventory, HP and breath go with them and replace the ones
       they have in the target world. Other player data (position, meta) is kept
-      separately for each world, see multiworld.md. Entering a world for the
+      separately for each world, see world_format.md. Entering a world for the
       first time makes them a new player there (`on_newplayer`). Their account
       and privileges are the same in all worlds.
     * If the world has different content or the client is too old to switch

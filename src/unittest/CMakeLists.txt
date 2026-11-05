@@ -4,6 +4,7 @@ set(unittest_SRCS
 	${unittest_HDRS}
 	${CMAKE_CURRENT_SOURCE_DIR}/test.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_address.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/test_accountsdatabase.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_authdatabase.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_activeobject.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_areastore.cpp
@@ -28,7 +29,7 @@ set(unittest_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/test_modchannels.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_modstoragedatabase.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_moveaction.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/test_multiworld.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/test_worlds.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_noderesolver.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_noise.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/test_objdef.cpp

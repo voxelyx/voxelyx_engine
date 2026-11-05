@@ -1,7 +1,7 @@
 // Voxelyx
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-#include "multiworld/server_config.h"
+#include "worlds/server_config.h"
 #include "filesys.h"
 #include "porting.h"
 #include "settings.h"
@@ -22,7 +22,7 @@ bool createServerConfIfMissing(const std::string &path,
 	return fs::CreateAllDirs(fs::RemoveLastPathComponent(path)) &&
 		fs::safeWriteToFile(path, std::string(
 		"# Configuration of this server, the same for all of its worlds.\n"
-		"# See doc/multiworld.md.\n"
+		"# See doc/world_format.md.\n"
 		"#\n"
 		"# The world in which new players start\n"
 		"default_world = " + default_world + "\n"
@@ -31,7 +31,8 @@ bool createServerConfIfMissing(const std::string &path,
 		"# off:\n"
 		"#load_mod_mymod = false\n"
 		"#\n"
-		"# Where the accounts of all players are stored: sqlite3, files, ...\n"
+		"# Where the accounts of all players, and the players in each world, are\n"
+		"# stored: sqlite3 (accounts.sqlite), postgresql\n"
 		"auth_backend = sqlite3\n"
 		"#\n"
 		"# creative_mode and enable_damage can be set here for all worlds, and in\n"
@@ -40,7 +41,7 @@ bool createServerConfIfMissing(const std::string &path,
 
 std::string getWorldsDir()
 {
-	std::string dir = g_settings->get("multiworld_dir");
+	std::string dir = g_settings->get("worlds_dir");
 	if (dir.empty())
 		dir = porting::path_user + DIR_DELIM + "worlds";
 	return dir;

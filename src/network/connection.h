@@ -66,7 +66,7 @@ public:
 	virtual float getLocalStat(rate_stat_type type) = 0;
 };
 
-// MTP = the Voxelyx network protocol (abbreviation of its former name, Minetest Protocol)
+// MTP = the Voxelyx network protocol
 IConnection *createMTP(bool is_server, UDPSocket &&socket, PeerHandler *handler);
 
 } // namespace

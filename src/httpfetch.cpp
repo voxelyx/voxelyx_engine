@@ -446,8 +446,7 @@ const HTTPFetchResult * HTTPFetchOngoing::complete(CURLcode res)
 HTTPFetchOngoing::~HTTPFetchOngoing()
 {
 	if (multi) {
-		// Note: this can block if curl is stuck waiting for DNS, see
-		// <https://github.com/luanti-org/luanti/issues/16272>
+		// Note: this can block if curl is stuck waiting for DNS
 		CURLMcode mres = curl_multi_remove_handle(multi, curl);
 		if (mres != CURLM_OK) {
 			errorstream << "curl_multi_remove_handle"

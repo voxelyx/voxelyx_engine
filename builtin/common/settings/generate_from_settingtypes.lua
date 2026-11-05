@@ -15,9 +15,6 @@ local main_conf_example_header = [[
 #    Any other path can be chosen by passing the path as a parameter
 #    to the program, eg. "voxelyx.exe --config ../main.conf.example".
 
-#    Further documentation:
-#    https://docs.luanti.org/
-
 ]]
 
 local group_format_template = [[
@@ -62,10 +59,6 @@ local function create_main_conf_example(settings)
 						insert(result, "#    " .. comment_line .. "\n")
 					end
 				end
-			end
-			if entry.type == "key" then
-				local line = "See https://docs.luanti.org/for-players/controls/"
-				insert(result, "#    " .. line .. "\n")
 			end
 			insert(result, "#    type: " .. entry.type)
 			if entry.min then

@@ -26,10 +26,10 @@ public:
 	bool on_prejoinplayer(const std::string &name, const std::string &ip,
 			std::string *reason);
 	bool can_bypass_userlimit(const std::string &name, const std::string &ip);
-	// from_world: multiworld, name of the world the player came from (or empty)
+	// from_world: name of the world the player came from (or empty)
 	void on_joinplayer(ServerActiveObject *player, s64 last_login,
 		const std::string &from_world = "");
-	// to_world: multiworld, name of the world the player goes to (or empty)
+	// to_world: name of the world the player goes to (or empty)
 	void on_leaveplayer(ServerActiveObject *player, bool timeout,
 		const std::string &to_world = "");
 	void on_cheat(ServerActiveObject *player, const std::string &cheat_type);

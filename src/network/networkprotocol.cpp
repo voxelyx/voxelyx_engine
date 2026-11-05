@@ -84,7 +84,7 @@
 	PROTOCOL VERSION 54
 		Send 'en' translation files to clients as a fallback
 		Added TOCLIENT_WORLD_CHANGE (seamless transfer between worlds of a
-		multiworld server), world ID at the end of TOCLIENT_AUTH_ACCEPT
+		server), world ID at the end of TOCLIENT_AUTH_ACCEPT
 		[scheduled bump for 5.18.0]
 */
 

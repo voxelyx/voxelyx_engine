@@ -150,6 +150,21 @@ protected:
 	// Called after opening a fresh database file. Should create tables and indices.
 	virtual void createDatabase() = 0;
 
+	// Called when opening an existing database file. If it returns true,
+	// createDatabase() is called as for a fresh file. For databases that more
+	// than one connection may open at the same time, whether the file exists is
+	// not a reliable indicator that it has a schema yet.
+	virtual bool schemaMissing() { return false; }
+
+	// Abandons the transaction started by beginSave(), after a failure.
+	// Does not throw.
+	void rollbackSave() noexcept;
+
+	// The statement that beginSave() runs. A database that is written by more
+	// than one connection starts its transactions with "BEGIN IMMEDIATE;", so
+	// that a connection that has read something can't be left unable to write.
+	const char *m_begin_sql = "BEGIN;";
+
 	// Should prepare the necessary statements.
 	virtual void initStatements() = 0;
 
@@ -208,10 +223,76 @@ private:
 	sqlite3_stmt *m_stmt_delete = nullptr;
 };
 
-class PlayerDatabaseSQLite3 : private Database_SQLite3, public PlayerDatabase
+/*
+	Base of the classes that use the accounts database (accounts.sqlite): the
+	accounts and everything about them, which includes the state of their players
+	in each world. There can be several connections to the file, e.g. one for
+	the accounts of the whole server and one for the players of each world.
+
+	Schema (version 1)
+
+	  worlds                      the worlds of the server, by world_id
+	  accounts                    one row per account; current_world_id is the
+	                              world the player is in, or last was in
+	  privileges                  (account, privilege) pairs
+	  world_players               the state of an account in a world: position
+	                              and health; one row per (account, world)
+	  world_player_metadata       key/value pairs of a world_players row
+	  world_player_inventories    the inventory lists of a world_players row
+	  world_player_inventory_items  the occupied slots of those lists
+
+	Deleting an account deletes its privileges and its state in every world,
+	deleting a world deletes the state of all players in it, and an account whose
+	world is deleted is not in any world any more. All of that is done by the
+	database itself (ON DELETE CASCADE / SET NULL), so there are no leftovers.
+*/
+class AccountsDatabase_SQLite3 : public Database_SQLite3
 {
 public:
-	PlayerDatabaseSQLite3(const std::string &savedir);
+	virtual ~AccountsDatabase_SQLite3();
+
+	// Bumped with every change of the schema
+	static constexpr int SCHEMA_VERSION = 1;
+
+protected:
+	AccountsDatabase_SQLite3(const std::string &savedir);
+
+	bool schemaMissing() override;
+	void createDatabase() override;
+
+	// To be called by initStatements() of the derived classes
+	void initAccountStatements();
+
+	// The id of an account, 0 if there isn't one
+	u64 getAccountId(const std::string &name);
+
+	// Runs f() in a transaction. If it throws, the transaction is abandoned.
+	template <typename F>
+	void transaction(F &&f)
+	{
+		beginSave();
+		try {
+			f();
+		} catch (...) {
+			rollbackSave();
+			throw;
+		}
+		endSave();
+	}
+
+private:
+	int getSchemaVersion();
+
+	sqlite3_stmt *m_stmt_account_id = nullptr;
+};
+
+class PlayerDatabaseSQLite3 : private AccountsDatabase_SQLite3, public PlayerDatabase
+{
+public:
+	/// @param savedir directory of accounts.sqlite
+	/// @param world_id the world whose players this is about, it must have been
+	///        registered with AuthDatabase::registerWorld()
+	PlayerDatabaseSQLite3(const std::string &savedir, u32 world_id);
 	virtual ~PlayerDatabaseSQLite3();
 
 	void savePlayer(RemotePlayer *player);
@@ -222,32 +303,34 @@ public:
 	PARENT_CLASS_FUNCS
 
 protected:
-	virtual void createDatabase();
 	virtual void initStatements();
 
 private:
-	bool playerDataExists(const std::string &name);
+	// Adds the account of a player that authenticates without one
+	void provisionAccount(const std::string &name);
 
-	// Players
+	const u32 m_world_id;
+
+	sqlite3_stmt *m_stmt_account_add_locked = nullptr;
 	sqlite3_stmt *m_stmt_player_load = nullptr;
-	sqlite3_stmt *m_stmt_player_add = nullptr;
-	sqlite3_stmt *m_stmt_player_update = nullptr;
+	sqlite3_stmt *m_stmt_player_upsert = nullptr;
+	sqlite3_stmt *m_stmt_player_id = nullptr;
 	sqlite3_stmt *m_stmt_player_remove = nullptr;
 	sqlite3_stmt *m_stmt_player_list = nullptr;
-	sqlite3_stmt *m_stmt_player_load_inventory = nullptr;
-	sqlite3_stmt *m_stmt_player_load_inventory_items = nullptr;
-	sqlite3_stmt *m_stmt_player_add_inventory = nullptr;
-	sqlite3_stmt *m_stmt_player_add_inventory_items = nullptr;
-	sqlite3_stmt *m_stmt_player_remove_inventory = nullptr;
-	sqlite3_stmt *m_stmt_player_remove_inventory_items = nullptr;
-	sqlite3_stmt *m_stmt_player_metadata_load = nullptr;
-	sqlite3_stmt *m_stmt_player_metadata_remove = nullptr;
-	sqlite3_stmt *m_stmt_player_metadata_add = nullptr;
+	sqlite3_stmt *m_stmt_inventory_load = nullptr;
+	sqlite3_stmt *m_stmt_inventory_items_load = nullptr;
+	sqlite3_stmt *m_stmt_inventory_add = nullptr;
+	sqlite3_stmt *m_stmt_inventory_item_add = nullptr;
+	sqlite3_stmt *m_stmt_inventory_remove = nullptr;
+	sqlite3_stmt *m_stmt_metadata_load = nullptr;
+	sqlite3_stmt *m_stmt_metadata_add = nullptr;
+	sqlite3_stmt *m_stmt_metadata_remove = nullptr;
 };
 
-class AuthDatabaseSQLite3 : private Database_SQLite3, public AuthDatabase
+class AuthDatabaseSQLite3 : private AccountsDatabase_SQLite3, public AuthDatabase
 {
 public:
+	/// @param savedir directory of accounts.sqlite
 	AuthDatabaseSQLite3(const std::string &savedir);
 	virtual ~AuthDatabaseSQLite3();
 
@@ -258,10 +341,14 @@ public:
 	virtual void listNames(std::vector<std::string> &res);
 	virtual void reload();
 
+	virtual void registerWorld(u32 world_id, const std::string &name);
+	virtual void deleteWorld(u32 world_id);
+	virtual bool getCurrentWorld(const std::string &name, u32 *world_id);
+	virtual void setCurrentWorld(const std::string &name, u32 world_id);
+
 	PARENT_CLASS_FUNCS
 
 protected:
-	virtual void createDatabase();
 	virtual void initStatements();
 
 private:
@@ -275,7 +362,10 @@ private:
 	sqlite3_stmt *m_stmt_read_privs = nullptr;
 	sqlite3_stmt *m_stmt_write_privs = nullptr;
 	sqlite3_stmt *m_stmt_delete_privs = nullptr;
-	sqlite3_stmt *m_stmt_last_insert_rowid = nullptr;
+	sqlite3_stmt *m_stmt_world_register = nullptr;
+	sqlite3_stmt *m_stmt_world_delete = nullptr;
+	sqlite3_stmt *m_stmt_current_world_get = nullptr;
+	sqlite3_stmt *m_stmt_current_world_set = nullptr;
 };
 
 class ModStorageDatabaseSQLite3 : private Database_SQLite3, public ModStorageDatabase

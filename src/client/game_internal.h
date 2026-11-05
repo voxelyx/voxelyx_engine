@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "multiworld/world.h"
+#include "worlds/world.h"
 #include "game.h"
 
 #include <AnimatedMeshSceneNode.h>

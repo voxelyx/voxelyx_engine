@@ -1,8 +1,6 @@
 # Documentation
 
 This directory contains mostly reference documentation for the Voxelyx engine.
-For a less prescriptive and more guiding documentation, also look at:
-https://docs.luanti.org
 
 Note that the inner workings of the engine are not well documented. It's most
 often better to read the code.
@@ -17,7 +15,6 @@ Here is a list with descriptions of relevant files:
 - [lua_api.md](lua_api.md): Server Modding API reference. (Not only the Lua part,
     but also file structure and everything else.)
     If you want to make a mod or game, look here!
-    A rendered version is also available at <https://api.luanti.org/>.
     [mkdocs/README.md](Documentation building instructions)
 - [builtin_entities.md](builtin_entities.md): Doc for entities predefined by the
     engine (in builtin), i.e. dropped items and falling nodes.
@@ -52,9 +49,5 @@ Here is a list with descriptions of relevant files:
 - [developing/](developing/): Information about Voxelyx development.
     Note: [developing/profiling.md](developing/profiling.md) can be useful for
     modders and server owners!
-- [direction.md](direction.md): Information related to the future direction of
-    Voxelyx. Commonly referred to as the roadmap document.
-- [breakages.md](breakages.md): List of planned breakages for the next major
-    release, i.e. 6.0.0.
 - [docker_server.md](docker_server.md): Information about our Docker server
     images in the ghcr.

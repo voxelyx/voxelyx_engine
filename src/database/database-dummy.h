@@ -63,8 +63,16 @@ public:
 	virtual void listNames(std::vector<std::string> &res);
 	virtual void reload();
 
+	virtual void registerWorld(u32 world_id, const std::string &name);
+	virtual void deleteWorld(u32 world_id);
+	virtual bool getCurrentWorld(const std::string &name, u32 *world_id);
+	virtual void setCurrentWorld(const std::string &name, u32 world_id);
+
 private:
 	std::mutex m_mutex;
 	std::unordered_map<std::string, AuthEntry> m_auth_entries;
 	u64 m_next_id = 1;
+	std::map<u32, std::string> m_worlds;
+	// account name -> world id
+	std::unordered_map<std::string, u32> m_current_worlds;
 };

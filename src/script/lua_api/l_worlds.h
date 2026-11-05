@@ -6,14 +6,14 @@
 #include "lua_api/l_base.h"
 
 /*
-	Multiworld API: see doc/multiworld.md and "Multiworld" in doc/lua_api.md.
+	World API: see doc/world_format.md and "Worlds" in doc/lua_api.md.
 
-	Every world of a multiworld server runs in its own Lua state on its own
+	Every world of a server runs in its own Lua state on its own
 	thread. These functions are the only way for mods in different worlds to
 	interact. On a regular single-world server they are available as well:
 	there is exactly one world, no transfers are possible.
 */
-class ModApiMultiworld : public ModApiBase
+class ModApiWorlds : public ModApiBase
 {
 private:
 	// core.get_world_id() -> number

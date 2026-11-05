@@ -694,7 +694,7 @@ public:
 	 * Used to indicate that node registration has finished.
 	 * @param completed tells whether registration is complete
 	 */
-	//! Multiworld: make all worlds of a cluster use the same IDs, see ContentIdRegistry.
+	//! Make all worlds of a cluster use the same IDs, see ContentIdRegistry.
 	//! Must be called before any node is registered.
 	void setContentIdRegistry(ContentIdRegistry *registry) { m_id_registry = registry; }
 
@@ -743,7 +743,7 @@ private:
 
 	/*!
 	 * Like allocateId(), but takes the ID from the cluster-wide registry
-	 * if there is one (multiworld), so a node has the same ID in all worlds.
+	 * if there is one, so a node has the same ID in all worlds.
 	 */
 	content_t allocateIdFor(const std::string &name);
 
@@ -798,7 +798,7 @@ private:
 	 */
 	content_t m_next_id;
 
-	//! Multiworld: shared ID assignment, or null
+	//! Shared ID assignment, or null
 	ContentIdRegistry *m_id_registry = nullptr;
 
 	//! True if all nodes have been registered.

@@ -978,7 +978,7 @@ enable_split_login_register (Enable split login/register) bool true
 
 #    URL to JSON file which provides information about the newest Voxelyx release.
 #    If this is empty the engine will never check for updates.
-update_information_url (Update information URL) string https://www.luanti.org/release_info.json
+update_information_url (Update information URL) string
 
 [*Server] [server]
 
@@ -2280,13 +2280,13 @@ dedicated_server_step (Dedicated server step) float 0.09 0.0 1.0
 #    Directory containing the worlds that a dedicated server runs. All of them
 #    run at the same time, each on its own thread, and players can move between
 #    them. All worlds use the same game, the same mods (see main.conf) and the
-#    same accounts. See doc/multiworld.md.
+#    same accounts. See doc/world_format.md.
 #    Empty = the 'worlds' folder of the user directory.
-multiworld_dir (Worlds directory) path
+worlds_dir (Worlds directory) path
 
 #    Comma-separated names of the worlds to run on a dedicated server.
 #    Empty = all worlds in the worlds directory that use the same game.
-multiworld_worlds (World list) string
+world_list (World list) string
 
 #    Name of the world in which new players start on a dedicated server.
 #    It is created if it doesn't exist yet. Empty = main.

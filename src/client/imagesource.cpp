@@ -1414,8 +1414,6 @@ bool ImageSource::generateImagePart(std::string_view part_of_name,
 			 * Q: why not just enable/disable filtering depending on texture size?
 			 * A: large texture resolutions apparently allow getting rid of the Moire
 			 *    effect way better than anisotropic filtering alone could.
-			 *    see <https://github.com/luanti-org/luanti/issues/15604> and related
-			 *    linked discussions.
 			 */
 			const bool filter = m_setting_trilinear_filter || m_setting_bilinear_filter;
 			if (filter) {

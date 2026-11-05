@@ -8,8 +8,8 @@
 #include "debug.h"
 #include "unittest/test.h"
 #include "server.h"
-#include "multiworld/world_cluster.h"
-#include "multiworld/server_config.h"
+#include "worlds/world_cluster.h"
+#include "worlds/server_config.h"
 #include "util/string.h"
 #include "filesys.h"
 #include "version.h"
@@ -59,8 +59,6 @@ extern "C" {
 #endif
 
 #if defined(__MINGW32__) && !defined(__clang__)
-// see <https://github.com/luanti-org/luanti/issues/14140> or
-// <https://github.com/luanti-org/luanti/issues/10137> for some of the issues we had
 #error ==================================
 #error MinGW gcc has a broken TLS implementation and is not supported for building \
 	Voxelyx. Look at testTLS() in test_threading.cpp and see for yourself. \
@@ -419,8 +417,7 @@ static void print_help(const OptionList &allowed_options)
 
 	std::pair<const char*, std::vector<std::string>> the_list[] = {
 		{"map", ServerMap::getDatabaseBackends()},
-		{"players", ServerEnvironment::getPlayerDatabaseBackends()},
-		{"auth", ServerEnvironment::getAuthDatabaseBackends()},
+		{"accounts", ServerEnvironment::getAccountDatabaseBackends()},
 		{"mod storage", Server::getModStorageDatabaseBackends()},
 	};
 
@@ -1029,7 +1026,7 @@ static std::string get_clean_world_path(const std::string &path)
  *****************************************************************************/
 /*
 	Every dedicated server runs all of its worlds at the same time (a server
-	with one world is a cluster of one), see doc/multiworld.md.
+	with one world is a cluster of one), see doc/world_format.md.
 */
 static bool run_world_cluster(const GameParams &game_params,
 		const Address &bind_addr, ChatInterface *iface)
@@ -1039,7 +1036,7 @@ static bool run_world_cluster(const GameParams &game_params,
 	// The configuration file that was loaded (--config), if any
 	cfg.server_conf_path = g_settings_path;
 	cfg.worlds_dir = getWorldsDir();
-	for (std::string_view name : str_split(g_settings->get("multiworld_worlds"), ',')) {
+	for (std::string_view name : str_split(g_settings->get("world_list"), ',')) {
 		const std::string trimmed(trim(name));
 		if (!trimmed.empty())
 			cfg.worlds.push_back(trimmed);
@@ -1049,7 +1046,6 @@ static bool run_world_cluster(const GameParams &game_params,
 	// yet is created.
 	cfg.default_world_path = game_params.world_path;
 	cfg.chat_iface = iface;
-	cfg.state_path = porting::path_user + DIR_DELIM + "multiworld_players.txt";
 	cfg.ban_path = porting::path_user + DIR_DELIM + "ipban.txt";
 
 	verbosestream << "Worlds dir [" << cfg.worlds_dir << "]" << std::endl;

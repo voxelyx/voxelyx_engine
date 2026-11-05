@@ -184,7 +184,6 @@ void EmergeManager::initMapgens(MapgenParams *params)
 	 * unfinished slice bug, so allow multiple threads by default.
 	 * We do this for the Lua mapgens who benefit from this (since singlenode
 	 * itself isn't very useful).
-	 * see <https://github.com/luanti-org/luanti/issues/9357>
 	 */
 	bool multithread = params->mgtype == MAPGEN_SINGLENODE;
 	initThreads(multithread);
@@ -213,8 +212,7 @@ void EmergeManager::initThreads(bool should_multithread)
 		}
 		// Leave 2 cores for main thread and whatever else.
 		nthreads = (concurrency > 2) ? (concurrency - 2) : 1;
-		// Testing has shown that more than 4 threads don't become any faster:
-		// <https://github.com/luanti-org/luanti/pull/16634>
+		// Testing has shown that more than 4 threads don't become any faster.
 		// May have to be revisited after emerge code is refactored to be less
 		// lock heavy.
 		nthreads = std::min<s16>(4, nthreads);

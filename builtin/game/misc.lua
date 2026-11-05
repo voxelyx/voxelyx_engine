@@ -66,7 +66,7 @@ function core.send_leave_message(player_name, timed_out)
 end
 
 
--- Multiworld: announcements for players that move between worlds
+-- Announcements for players that move between worlds
 -- (instead of "joined the game" / "left the game").
 function core.send_world_arrival_message(player_name, from_world)
 	core.chat_send_all("*** " .. S("@1 arrived from world @2.", player_name, from_world))

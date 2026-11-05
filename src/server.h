@@ -9,8 +9,8 @@
 #include "hud_element.h" // HudElementStat
 #include "gamedef.h"
 #include "content/worlds.h"
-#include "multiworld/world.h"
-#include "multiworld/world_link.h" // CarriedPlayerState
+#include "worlds/world.h"
+#include "worlds/world_link.h" // CarriedPlayerState
 #include "network/peerhandler.h"
 #include "network/socket.h"
 #include "util/thread.h"
@@ -201,7 +201,7 @@ public:
 		std::string *shutdown_errmsg = nullptr
 	);
 	/*
-		Constructor for a world that is part of a WorldCluster (multiworld).
+		Constructor for a world that is part of a WorldCluster.
 		The connection is shared with all other worlds, the cluster does the
 		network I/O and forwards the packets of the peers that are currently in
 		this world. Each world has its own thread and its own Lua state.
@@ -218,7 +218,7 @@ public:
 	DISABLE_CLASS_COPY(Server);
 
 	/*
-		Multiworld API (all thread-safe unless noted)
+		World API (all thread-safe unless noted)
 	*/
 
 	/// The world this server runs: name, ID, spawn point, per-world settings.
@@ -791,7 +791,7 @@ private:
 	ModIPCStore *m_ipcstore_ptr = &m_ipcstore;
 
 	/*
-		Multiworld
+		Worlds
 	*/
 	struct NetSetup {
 		std::shared_ptr<con::IConnection> con;

@@ -8,8 +8,7 @@ body:
         Please note the following:
 
         1. **Update Voxelyx to the latest stable or dev version** before submitting a bug report. Make sure the bug is still reproducible on the latest version.
-        2. This page is for reporting the bugs of **the engine itself**. For bugs in a particular game, please [search for the game on ContentDB](https://content.luanti.org/packages/?type=game) and submit a bug report to its developers.
-            * For example, issues about Minetest Game are submitted to [its own repository](https://github.com/luanti-org/minetest_game/issues).
+        2. This page is for reporting the bugs of **the engine itself**. For bugs in a particular game, please submit a bug report to the developers of that game.
         3. Please provide as many relevant details as possible.
         4. If you have used an LLM/AI to format your issue description, disclose this. Try to keep it concise. No walls of text please.
 

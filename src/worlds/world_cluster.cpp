@@ -1,8 +1,8 @@
 // Voxelyx
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-#include "multiworld/world_cluster.h"
-#include "multiworld/server_config.h"
+#include "worlds/world_cluster.h"
+#include "worlds/server_config.h"
 #include "serverenvironment.h"
 #include "content/worlds.h"
 #include "database/database.h"
@@ -288,39 +288,14 @@ void WorldCluster::openAuthDatabase()
 	conf.readConfigFile(m_server_conf_path.c_str());
 	std::string backend = "sqlite3";
 	conf.getNoEx("auth_backend", backend);
-	if (backend == "files") {
-		warningstream << "/!\\ You are using old auth file backend. This backend is "
-			"deprecated and will be removed in a future release /!\\" << std::endl
-			<< "Set auth_backend = sqlite3 in main.conf." << std::endl;
+	for (const char *legacy : {"auth.sqlite", "auth.txt"}) {
+		if (fs::PathExists(m_cfg.server_dir + DIR_DELIM + legacy))
+			warningstream << "WorldCluster: " << legacy << " is from an older format "
+				"of the accounts, which is ignored. The accounts are in accounts.sqlite "
+				"now, and players log in again as new ones." << std::endl;
 	}
 	m_auth = std::make_unique<SharedAuthDatabase>(std::unique_ptr<AuthDatabase>(
 		ServerEnvironment::openAuthDatabase(backend, m_cfg.server_dir, conf)));
-}
-
-void WorldCluster::loadState()
-{
-	std::string content;
-	if (!fs::ReadFile(m_cfg.state_path, content))
-		return;
-	std::istringstream is(content);
-	std::string line;
-	while (std::getline(is, line)) {
-		const size_t sep = line.find('\t');
-		if (sep == std::string::npos)
-			continue;
-		m_login_worlds[line.substr(0, sep)] = trim(line.substr(sep + 1));
-	}
-}
-
-void WorldCluster::saveStateLocked()
-{
-	if (m_cfg.state_path.empty())
-		return;
-	std::ostringstream os;
-	for (const auto &it : m_login_worlds)
-		os << it.first << '\t' << it.second << '\n';
-	if (!fs::safeWriteToFile(m_cfg.state_path, os.str()))
-		warningstream << "WorldCluster: couldn't write " << m_cfg.state_path << std::endl;
 }
 
 void WorldCluster::start()
@@ -330,8 +305,6 @@ void WorldCluster::start()
 
 	std::string default_name;
 	const std::vector<WorldEntry> entries = discoverWorlds(&default_name);
-
-	loadState();
 
 	// Accounts are the server's, not the worlds'
 	openAuthDatabase();
@@ -438,7 +411,7 @@ bool WorldCluster::createWorld(const std::string &from, const std::string &name,
 		return false;
 	}
 	if (!m_cfg.worlds.empty()) {
-		*err = "the world list is fixed by the multiworld_worlds setting";
+		*err = "the world list is fixed by the world_list setting";
 		return false;
 	}
 	if (m_shutting_down || !m_admin) {
@@ -526,7 +499,7 @@ bool WorldCluster::removeWorld(const std::string &from, const std::string &name,
 			return false;
 		}
 		if (!m_cfg.worlds.empty()) {
-			*err = "the world list is fixed by the multiworld_worlds setting";
+			*err = "the world list is fixed by the world_list setting";
 			return false;
 		}
 		std::lock_guard<std::mutex> lock(m_state_mutex);
@@ -616,20 +589,6 @@ void WorldCluster::doRemoveWorld(const std::string &name, bool delete_files,
 				++it;
 		}
 	}
-	{
-		std::lock_guard<std::mutex> lock(m_state_mutex);
-		bool changed = false;
-		for (auto it = m_login_worlds.begin(); it != m_login_worlds.end();) {
-			if (it->second == name) {
-				it = m_login_worlds.erase(it);
-				changed = true;
-			} else {
-				++it;
-			}
-		}
-		if (changed)
-			saveStateLocked();
-	}
 
 	// 3. Stop it. This saves the map and takes a while for big worlds. The World
 	//    object stays, the routing code may still point at it.
@@ -638,12 +597,20 @@ void WorldCluster::doRemoveWorld(const std::string &name, bool delete_files,
 		world->server.reset();
 	}
 	const std::string path = world->getPath();
+	const u32 world_id = world->getId();
 	m_retired.push_back(std::move(world));
 
-	// 4. Its files
+	// 4. Its files, and the state of the players in it. A world that is only
+	//    moved away keeps the latter, its ID is never given out again.
 	if (delete_files) {
 		if (!fs::RecursiveDelete(path))
 			err = "could not delete " + path;
+		try {
+			m_auth->deleteWorld(world_id);
+		} catch (const DatabaseException &e) {
+			err += (err.empty() ? "" : "; ") + std::string("could not delete the "
+				"players of the world from the accounts database: ") + e.what();
+		}
 	} else {
 		const std::string trash = m_cfg.worlds_dir + DIR_DELIM ".removed";
 		const std::string target = trash + DIR_DELIM + name + "-" +
@@ -735,16 +702,12 @@ std::vector<std::string> WorldCluster::getWorldNames() const
 
 World *WorldCluster::chooseLoginWorld(const std::string &player)
 {
+	// The world they were in is in the accounts database
+	u32 wanted = 0;
+	const bool known = m_auth->getCurrentWorld(player, &wanted);
 	std::shared_lock<std::shared_mutex> worlds_lock(m_worlds_mutex);
-	std::string wanted;
-	{
-		std::lock_guard<std::mutex> lock(m_state_mutex);
-		auto it = m_login_worlds.find(player);
-		if (it != m_login_worlds.end())
-			wanted = it->second;
-	}
-	if (!wanted.empty())
-		if (World *w = findWorld(wanted))
+	if (known)
+		if (World *w = findWorldById(wanted))
 			if (!w->removing)
 				return w;
 	return m_default_world;
@@ -938,11 +901,16 @@ bool WorldCluster::isPeerRoutedTo(session_t peer, const std::string &world)
 
 void WorldCluster::setLoginWorld(const std::string &player, const std::string &world)
 {
-	std::lock_guard<std::mutex> lock(m_state_mutex);
-	if (m_login_worlds[player] != world) {
-		m_login_worlds[player] = world;
-		saveStateLocked();
+	u32 id;
+	{
+		std::shared_lock<std::shared_mutex> worlds_lock(m_worlds_mutex);
+		const World *w = findWorld(world);
+		if (!w)
+			return;
+		id = w->getId();
 	}
+	// Nothing happens for a player without an account
+	m_auth->setCurrentWorld(player, id);
 }
 
 bool WorldCluster::sendWorldMessage(const std::string &from, const std::string &to,

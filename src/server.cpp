@@ -3,7 +3,7 @@
 // Copyright (C) 2010-2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "server.h"
-#include "multiworld/world_link.h"
+#include "worlds/world_link.h"
 
 #include "activeobject.h"
 #include "chat_interface.h"
@@ -549,7 +549,7 @@ void Server::init()
 	m_mod_storage_database = openModStorageDatabase(m_path_world);
 	m_mod_storage_database->beginSave();
 
-	// All worlds of a server use the same mods, see doc/multiworld.md
+	// All worlds of a server use the same mods, see doc/world_format.md
 	m_modmgr = std::make_unique<ServerModManager>(
 		m_world_link ? m_world_link->getServerConfPath() : g_settings_path);
 
@@ -617,7 +617,8 @@ void Server::init()
 		this, m_metrics_backend.get());
 	if (m_world_link) {
 		// Accounts and privileges belong to the server, not to the world
-		m_env->setSharedAuthDatabase(m_world_link->getAuthDatabase());
+		m_env->setSharedAuthDatabase(m_world_link->getAuthDatabase(),
+			m_world_link->getAccountsDir());
 	}
 	m_env->init();
 
@@ -1336,7 +1337,7 @@ PlayerSAO *Server::StageTwoClientInit(session_t peer_id)
 	// the inventory the player brings along. Before the player is sent their HP.
 	applyCarriedState(player, playersao);
 
-	// Multiworld: a transfer may ask for a specific destination
+	// A transfer may ask for a specific destination
 	{
 		auto it = m_pending_arrivals.find(playername);
 		if (it != m_pending_arrivals.end()) {
@@ -4380,7 +4381,7 @@ std::unique_ptr<PlayerSAO> Server::emergePlayer(const char *name, session_t peer
 }
 
 /*
-	Multiworld
+	Worlds
 */
 
 void Server::enqueueTask(std::function<void(Server &)> task)
@@ -4876,8 +4877,7 @@ ModStorageDatabase *Server::openModStorageDatabase(const std::string &world_path
 	if (backend == "files") {
 		warningstream << "/!\\ You are using the old mod storage files backend. "
 			"This backend is deprecated and may be removed in a future release /!\\"
-			"\nSwitching to SQLite3 is advised, "
-			"please read https://docs.luanti.org/for-server-hosts/database-backends." << std::endl;
+			"\nSwitching to SQLite3 is advised." << std::endl;
 	}
 
 	return openModStorageDatabase(backend, world_path, world_conf);

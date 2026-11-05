@@ -3,7 +3,7 @@
 // Copyright (C) 2013 celeron55, Perttu Ahola <celeron55@gmail.com>
 
 #include "lua_api/l_server.h"
-#include "multiworld/world_link.h"
+#include "worlds/world_link.h"
 
 #include "common/c_content.h"
 #include "common/c_converter.h"

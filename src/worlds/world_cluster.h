@@ -14,17 +14,17 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include "multiworld/world.h"
+#include "worlds/world.h"
 #include "network/peerhandler.h"
 #include "network/socket.h"
 #include "server.h" // ModIPCStore, Server
 #include "server/ban.h"
 #include "threading/thread.h"
 #include "util/numeric.h" // IntervalLimiter
-#include "multiworld/content_ids.h"
-#include "multiworld/world_link.h"
-#include "multiworld/world_connection.h"
-#include "multiworld/shared_auth.h"
+#include "worlds/content_ids.h"
+#include "worlds/world_link.h"
+#include "worlds/world_connection.h"
+#include "worlds/shared_auth.h"
 
 struct ChatInterface;
 class Settings;
@@ -62,7 +62,8 @@ class WorldCluster final : public con::PeerHandler, public IWorldLink
 public:
 	struct Config {
 		// Directory for the files that belong to the server as a whole:
-		// main.conf and the accounts
+		// main.conf and the accounts database (which also has the state of
+		// the players in every world)
 		std::string server_dir;
 		// The server's main.conf. Empty = <server_dir>/main.conf
 		std::string server_conf_path;
@@ -79,8 +80,6 @@ public:
 		std::string default_world_path;
 		// Terminal chat interface (--terminal), attached to the default world
 		ChatInterface *chat_iface = nullptr;
-		// Remembers the last world of every player
-		std::string state_path;
 		// Ban list shared by all worlds
 		std::string ban_path;
 	};
@@ -132,6 +131,7 @@ public:
 			const std::string &message, bool reconnect) override;
 	bool banPlayer(const std::string &from, const std::string &name) override;
 	AuthDatabase *getAuthDatabase() override { return m_auth.get(); }
+	const std::string &getAccountsDir() const override { return m_cfg.server_dir; }
 	const std::string &getServerConfPath() const override { return m_server_conf_path; }
 	ModIPCStore *getIPCStore() override { return &m_ipc; }
 	BanManager *getBanManager() override { return &m_ban; }
@@ -173,8 +173,6 @@ private:
 	World *findWorldById(u32 id) const;
 	World *chooseLoginWorld(const std::string &player);
 	void routePacket(NetworkPacket &pkt);
-	void loadState();
-	void saveStateLocked();
 
 	Config m_cfg;
 	Address m_bind_addr;
@@ -212,7 +210,6 @@ private:
 	std::unordered_set<session_t> m_unassigned;
 
 	std::mutex m_state_mutex;
-	std::map<std::string, std::string> m_login_worlds;
 	// player name -> name of the world they are in (only players who are online)
 	std::map<std::string, std::string> m_online;
 };

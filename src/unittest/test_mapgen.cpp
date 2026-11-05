@@ -50,7 +50,7 @@ void TestMapgen::testBiomeGen(IGameDef *gamedef)
 
 	{
 		// Add some biomes (equivalent to l_register_biome)
-		// Taken from minetest_game/mods/default/mapgen.lua
+		// Taken from the mapgen.lua of a typical game
 		size_t bmgr_count = bmgr.getNumObjects(); // this is 1 ?
 
 		Biome *b = BiomeManager::create(BIOMETYPE_NORMAL);

@@ -149,7 +149,6 @@ void set_default_settings()
 	settings->setDefault("keymap_minimap", "SYSTEM_SCANCODE_25|GAMEPAD_BUTTON_4"); // KEY_KEY_V|Gamepad Back
 	settings->setDefault("keymap_console", "SYSTEM_SCANCODE_67"); // KEY_F10
 
-	// see <https://github.com/luanti-org/luanti/issues/12792>
 	settings->setDefault("keymap_rangeselect", has_touch ? "SYSTEM_SCANCODE_21" : ""); // KEY_KEY_R
 
 	settings->setDefault("keymap_freemove", "SYSTEM_SCANCODE_14|GAMEPAD_BUTTON_13"); // KEY_KEY_K|D-Pad Left
@@ -410,11 +409,8 @@ void set_default_settings()
 
 	settings->setDefault("contentdb_flag_blacklist", "nonfree, desktop_default");
 
-#if ENABLE_UPDATE_CHECKER
-	settings->setDefault("update_information_url", "https://www.luanti.org/release_info.json");
-#else
+	// There is no release feed yet, so there is nothing to check
 	settings->setDefault("update_information_url", "");
-#endif
 
 	// Server
 	settings->setDefault("strip_color_codes", "true");
@@ -481,8 +477,8 @@ void set_default_settings()
 	settings->setDefault("map_compression_level_net", "-1");
 	settings->setDefault("full_block_send_enable_min_time_from_building", "2.0");
 	settings->setDefault("dedicated_server_step", "0.09");
-	settings->setDefault("multiworld_dir", "");
-	settings->setDefault("multiworld_worlds", "");
+	settings->setDefault("worlds_dir", "");
+	settings->setDefault("world_list", "");
 	settings->setDefault("default_world", "");
 	settings->setDefault("active_block_mgmt_interval", "2.0");
 	settings->setDefault("abm_interval", "1.0");

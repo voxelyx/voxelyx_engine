@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 #include <cmath>
-#include "lua_api/l_multiworld.h"
+#include "lua_api/l_worlds.h"
 #include "lua_api/l_internal.h"
 #include "common/c_converter.h"
-#include "multiworld/world_link.h"
+#include "worlds/world_link.h"
 #include "server.h"
 
 static bool read_player_name(lua_State *L, int idx, std::string &name)
@@ -66,13 +66,13 @@ static bool read_world_ref(lua_State *L, int idx, Server *server, std::string &n
 	return false;
 }
 
-int ModApiMultiworld::l_get_world_id(lua_State *L)
+int ModApiWorlds::l_get_world_id(lua_State *L)
 {
 	lua_pushinteger(L, getServer(L)->getWorld()->getId());
 	return 1;
 }
 
-int ModApiMultiworld::l_get_world_setting(lua_State *L)
+int ModApiWorlds::l_get_world_setting(lua_State *L)
 {
 	// A setting of main.conf, unless world.conf of this world overrides it
 	std::string value;
@@ -83,13 +83,13 @@ int ModApiMultiworld::l_get_world_setting(lua_State *L)
 	return 1;
 }
 
-int ModApiMultiworld::l_get_world_name(lua_State *L)
+int ModApiWorlds::l_get_world_name(lua_State *L)
 {
 	lua_pushstring(L, getServer(L)->getWorld()->getName().c_str());
 	return 1;
 }
 
-int ModApiMultiworld::l_get_worlds(lua_State *L)
+int ModApiWorlds::l_get_worlds(lua_State *L)
 {
 	Server *server = getServer(L);
 	IWorldLink *link = server->getWorldLink();
@@ -127,7 +127,7 @@ int ModApiMultiworld::l_get_worlds(lua_State *L)
 	return 1;
 }
 
-int ModApiMultiworld::l_transfer_player_to_world(lua_State *L)
+int ModApiWorlds::l_transfer_player_to_world(lua_State *L)
 {
 	Server *server = getServer(L);
 
@@ -160,7 +160,7 @@ int ModApiMultiworld::l_transfer_player_to_world(lua_State *L)
 	return 2;
 }
 
-int ModApiMultiworld::l_send_to_world(lua_State *L)
+int ModApiWorlds::l_send_to_world(lua_State *L)
 {
 	Server *server = getServer(L);
 
@@ -189,7 +189,7 @@ int ModApiMultiworld::l_send_to_world(lua_State *L)
 	return 2;
 }
 
-int ModApiMultiworld::l_create_world(lua_State *L)
+int ModApiWorlds::l_create_world(lua_State *L)
 {
 	Server *server = getServer(L);
 	const std::string name = readParam<std::string>(L, 1);
@@ -207,7 +207,7 @@ int ModApiMultiworld::l_create_world(lua_State *L)
 	return 2;
 }
 
-int ModApiMultiworld::l_remove_world(lua_State *L)
+int ModApiWorlds::l_remove_world(lua_State *L)
 {
 	Server *server = getServer(L);
 	std::string name;
@@ -231,7 +231,7 @@ int ModApiMultiworld::l_remove_world(lua_State *L)
 	return 2;
 }
 
-void ModApiMultiworld::Initialize(lua_State *L, int top)
+void ModApiWorlds::Initialize(lua_State *L, int top)
 {
 	API_FCT(get_world_id);
 	API_FCT(get_world_setting);

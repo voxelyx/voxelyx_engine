@@ -461,7 +461,7 @@ void NodeVisuals::updateMesh(const std::string &mesh, float visual_scale,
 		if (auto *skinned_mesh = dynamic_cast<scene::SkinnedMesh *>(src_mesh)) {
 			/*
 			 * Compatibility mess: Animated meshes - as well as static gltf meshes -
-			 * are not scaled by BS. see <https://github.com/luanti-org/luanti/pull/16112#issuecomment-2881860329>
+			 * are not scaled by BS.
 			 */
 			bool is_gltf = skinned_mesh->getSourceFormat() == scene::SkinnedMesh::SourceFormat::GLTF;
 			apply_bs = skinned_mesh->isStatic() && !is_gltf;

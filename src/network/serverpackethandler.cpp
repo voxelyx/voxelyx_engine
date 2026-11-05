@@ -4,7 +4,7 @@
 
 #include "chatmessage.h"
 #include "server.h"
-#include "multiworld/world_link.h"
+#include "worlds/world_link.h"
 #include "serverenvironment.h"
 #include "log.h"
 #include "emerge.h"
@@ -358,7 +358,7 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 	*pkt >> major_ver >> minor_ver >> patch_ver >> reserved >> full_ver;
 	if (pkt->getRemainingBytes() >= 2)
 		*pkt >> formspec_ver;
-	// Capability flags, only sent by clients >= 5.18 (multiworld)
+	// Capability flags, not sent by clients that predate them
 	u8 client_caps = 0;
 	if (pkt->getRemainingBytes() >= 1)
 		*pkt >> client_caps;
@@ -402,7 +402,7 @@ void Server::handleCommand_ClientReady(NetworkPacket* pkt)
 	const std::string &joined_name = playersao->getPlayer()->getName();
 	m_script->getAuth(joined_name, nullptr, nullptr, &last_login);
 
-	// Multiworld: was this player moved here from another world?
+	// Was this player moved here from another world?
 	std::string from_world;
 	{
 		auto it = m_pending_arrivals.find(joined_name);

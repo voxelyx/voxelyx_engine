@@ -428,7 +428,7 @@ add_subdirectory(network)
 add_subdirectory(script)
 add_subdirectory(util)
 add_subdirectory(server)
-add_subdirectory(multiworld)
+add_subdirectory(worlds)
 
 if(BUILD_UNITTESTS)
 	add_subdirectory(test)
@@ -523,7 +523,7 @@ set(common_SRCS
 	${benchmark_SRCS}
 	${common_SCRIPT_SRCS}
 	${common_server_SRCS}
-	${multiworld_SRCS}
+	${worlds_SRCS}
 	${mapgen_SRCS}
 	${server_network_SRCS}
 	${test_SRCS}

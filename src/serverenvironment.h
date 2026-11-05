@@ -286,16 +286,23 @@ public:
 	const std::vector<RemotePlayer *> getPlayers() const { return m_players; }
 	u32 getPlayerCount() const { return m_players.size(); }
 
-	static std::vector<std::string> getPlayerDatabaseBackends();
+	/// Backends of the accounts database, where the accounts and the state of
+	/// the players in every world are kept (setting auth_backend)
+	static std::vector<std::string> getAccountDatabaseBackends();
 
 	AuthDatabase *getAuthDatabase() { return m_auth_database; }
 	/**
 	 * Makes this environment use an account database owned by someone else
-	 * (the server-wide one of a multi-world server). Must be called before init().
+	 * (the server-wide one of a server with several worlds). Must be called before init().
+	 * @param accounts_dir where that database is, for the players of this world
 	 */
-	void setSharedAuthDatabase(AuthDatabase *db) { m_auth_database = db; m_auth_database_shared = true; }
-	static std::vector<std::string> getAuthDatabaseBackends();
-	/// Opens an account database. `savedir` is where file based backends store it.
+	void setSharedAuthDatabase(AuthDatabase *db, const std::string &accounts_dir)
+	{
+		m_auth_database = db;
+		m_auth_database_shared = true;
+		m_accounts_dir = accounts_dir;
+	}
+	/// Opens an accounts database. `savedir` is the directory of its file.
 	static AuthDatabase *openAuthDatabase(const std::string &name,
 			const std::string &savedir, const Settings &conf);
 
@@ -306,8 +313,10 @@ private:
 	 */
 	void loadDefaultMeta();
 
+	/// Opens the state of the players of a world, in the accounts database
+	/// in `savedir`.
 	static PlayerDatabase *openPlayerDatabase(const std::string &name,
-			const std::string &savedir, const Settings &conf);
+			const std::string &savedir, u32 world_id, const Settings &conf);
 	void activateBlock(MapBlock *block);
 
 	/*
@@ -432,6 +441,8 @@ private:
 	AuthDatabase *m_auth_database = nullptr;
 	// If true, m_auth_database belongs to somebody else
 	bool m_auth_database_shared = false;
+	// Directory of the accounts database, if it is shared
+	std::string m_accounts_dir;
 
 	// Particles
 	IntervalLimiter m_particle_management_interval;

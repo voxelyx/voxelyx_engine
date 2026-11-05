@@ -206,6 +206,7 @@ bool AuthDatabaseDummy::saveAuth(const AuthEntry &authEntry)
 	// Keep the existing ID; only mutable fields are overwritten.
 	AuthEntry entry = authEntry;
 	entry.id = it->second.id;
+	entry.last_login = std::max<s64>(entry.last_login, 0); // never: 0
 	it->second = std::move(entry);
 	return true;
 }
@@ -218,13 +219,16 @@ bool AuthDatabaseDummy::createAuth(AuthEntry &authEntry)
 		return false;
 
 	authEntry.id = m_next_id++;
-	m_auth_entries.emplace(authEntry.name, authEntry);
+	AuthEntry entry = authEntry;
+	entry.last_login = std::max<s64>(entry.last_login, 0); // never: 0
+	m_auth_entries.emplace(authEntry.name, entry);
 	return true;
 }
 
 bool AuthDatabaseDummy::deleteAuth(const std::string &name)
 {
 	auto lock = std::lock_guard(m_mutex);
+	m_current_worlds.erase(name);
 	return m_auth_entries.erase(name) > 0;
 }
 
@@ -240,4 +244,42 @@ void AuthDatabaseDummy::listNames(std::vector<std::string> &res)
 void AuthDatabaseDummy::reload()
 {
 	// No-op: data is already in memory.
+}
+
+void AuthDatabaseDummy::registerWorld(u32 world_id, const std::string &name)
+{
+	auto lock = std::lock_guard(m_mutex);
+	m_worlds[world_id] = name;
+}
+
+void AuthDatabaseDummy::deleteWorld(u32 world_id)
+{
+	auto lock = std::lock_guard(m_mutex);
+	m_worlds.erase(world_id);
+	for (auto it = m_current_worlds.begin(); it != m_current_worlds.end();) {
+		if (it->second == world_id)
+			it = m_current_worlds.erase(it);
+		else
+			++it;
+	}
+}
+
+bool AuthDatabaseDummy::getCurrentWorld(const std::string &name, u32 *world_id)
+{
+	auto lock = std::lock_guard(m_mutex);
+	auto it = m_current_worlds.find(name);
+	if (it == m_current_worlds.end())
+		return false;
+	*world_id = it->second;
+	return true;
+}
+
+void AuthDatabaseDummy::setCurrentWorld(const std::string &name, u32 world_id)
+{
+	auto lock = std::lock_guard(m_mutex);
+	// Same as the real thing: no account or no such world, nothing to set
+	if (m_auth_entries.find(name) == m_auth_entries.end() ||
+			m_worlds.find(world_id) == m_worlds.end())
+		return;
+	m_current_worlds[name] = world_id;
 }

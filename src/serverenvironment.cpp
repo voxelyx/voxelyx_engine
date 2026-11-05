@@ -28,14 +28,11 @@
 #include "filesys.h"
 #include "gameparams.h"
 #include "database/database-dummy.h"
-#include "database/database-files.h"
 #include "database/database-sqlite3.h"
 #if USE_POSTGRESQL
 #include "database/database-postgresql.h"
 #endif
-#if USE_LEVELDB
-#include "database/database-leveldb.h"
-#endif
+#include "worlds/world.h"
 #include "server/luaentity_sao.h"
 #include "server/player_sao.h"
 
@@ -217,32 +214,28 @@ void ServerEnvironment::init()
 		throw BaseException("The map's blocksize is not supported.");
 	}
 
-	// The backends are always written when a world is created. A world.conf
-	// without them is not a valid world.
-	std::string player_backend_name;
-	if (!conf.getNoEx("player_backend", player_backend_name))
-		throw BaseException("player_backend is not set in " + conf_path);
-	// Where accounts are kept is up to the server (main.conf), not the world.
-	// A multi-world server doesn't keep them in the worlds at all.
-	const std::string auth_backend_name = g_settings->get("auth_backend");
+	// The accounts, and with them the state of the players in every world, are
+	// kept in the accounts database. Where is up to the server (main.conf), not
+	// the world. A server with several worlds has one for all of them, otherwise it is
+	// in the world.
+	const std::string backend_name = g_settings->get("auth_backend");
+	const std::string accounts_dir = m_auth_database_shared ? m_accounts_dir : world_path;
 
-	if (player_backend_name == "files") {
-		warningstream << "/!\\ You are using old player file backend. "
-				<< "This backend is deprecated and will be removed in a future release /!\\"
-				<< std::endl << "Switching to SQLite3 or PostgreSQL is advised, "
-				<< "please read https://docs.luanti.org/for-server-hosts/database-backends." << std::endl;
+	// The files of the formats before accounts.sqlite are not read any more
+	for (const char *legacy : {"auth.sqlite", "auth.txt", "players.sqlite", "players"}) {
+		if (fs::PathExists(world_path + DIR_DELIM + legacy))
+			warningstream << "World \"" << m_server->getWorld()->getName()
+				<< "\" has " << legacy << " from an older format of the player data, "
+				"which is ignored. Players start anew." << std::endl;
 	}
 
-	if (auth_backend_name == "files" && !m_auth_database_shared) {
-		warningstream << "/!\\ You are using old auth file backend. "
-				<< "This backend is deprecated and will be removed in a future release /!\\"
-				<< std::endl << "Switching to SQLite3 is advised, "
-				<< "please read https://docs.luanti.org/for-server-hosts/database-backends." << std::endl;
-	}
-
-	m_player_database = openPlayerDatabase(player_backend_name, world_path, conf);
 	if (!m_auth_database_shared)
-		m_auth_database = openAuthDatabase(auth_backend_name, world_path, *g_settings);
+		m_auth_database = openAuthDatabase(backend_name, accounts_dir, *g_settings);
+
+	const World *world = m_server->getWorld();
+	m_auth_database->registerWorld(world->getId(), world->getName());
+	m_player_database = openPlayerDatabase(backend_name, accounts_dir,
+		world->getId(), *g_settings);
 
 	if (m_map && m_script->has_on_mapblocks_changed()) {
 		m_map->addEventReceiver(&m_on_mapblocks_changed_receiver);
@@ -1843,7 +1836,7 @@ void ServerEnvironment::processActiveObjectRemove(ServerActiveObject *obj)
 	m_script->removeObjectReference(obj);
 }
 
-std::vector<std::string> ServerEnvironment::getPlayerDatabaseBackends()
+std::vector<std::string> ServerEnvironment::getAccountDatabaseBackends()
 {
 	std::vector<std::string> ret;
 	ret.emplace_back("sqlite3");
@@ -1851,19 +1844,14 @@ std::vector<std::string> ServerEnvironment::getPlayerDatabaseBackends()
 #if USE_POSTGRESQL
 	ret.emplace_back("postgresql");
 #endif
-#if USE_LEVELDB
-	ret.emplace_back("leveldb");
-#endif
-	ret.emplace_back("files");
 	return ret;
 }
 
 PlayerDatabase *ServerEnvironment::openPlayerDatabase(const std::string &name,
-		const std::string &savedir, const Settings &conf)
+		const std::string &savedir, u32 world_id, const Settings &conf)
 {
-
 	if (name == "sqlite3")
-		return new PlayerDatabaseSQLite3(savedir);
+		return new PlayerDatabaseSQLite3(savedir, world_id);
 
 	if (name == "dummy")
 		return new Database_Dummy();
@@ -1871,35 +1859,12 @@ PlayerDatabase *ServerEnvironment::openPlayerDatabase(const std::string &name,
 #if USE_POSTGRESQL
 	if (name == "postgresql") {
 		std::string connect_string;
-		conf.getNoEx("pgsql_player_connection", connect_string);
-		return new PlayerDatabasePostgreSQL(connect_string);
+		conf.getNoEx("pgsql_auth_connection", connect_string);
+		return new PlayerDatabasePostgreSQL(connect_string, world_id);
 	}
 #endif
 
-#if USE_LEVELDB
-	if (name == "leveldb")
-		return new PlayerDatabaseLevelDB(savedir);
-#endif
-
-	if (name == "files")
-		return new PlayerDatabaseFiles(savedir + DIR_DELIM + "players");
-
 	throw BaseException(std::string("Database backend ") + name + " not supported.");
-}
-
-std::vector<std::string> ServerEnvironment::getAuthDatabaseBackends()
-{
-	std::vector<std::string> ret;
-	ret.emplace_back("sqlite3");
-	ret.emplace_back("dummy");
-#if USE_POSTGRESQL
-	ret.emplace_back("postgresql");
-#endif
-	ret.emplace_back("files");
-#if USE_LEVELDB
-	ret.emplace_back("leveldb");
-#endif
-	return ret;
 }
 
 AuthDatabase *ServerEnvironment::openAuthDatabase(
@@ -1916,16 +1881,8 @@ AuthDatabase *ServerEnvironment::openAuthDatabase(
 	}
 #endif
 
-	if (name == "files")
-		return new AuthDatabaseFiles(savedir);
-
 	if (name == "dummy")
 		return new AuthDatabaseDummy();
-
-#if USE_LEVELDB
-	if (name == "leveldb")
-		return new AuthDatabaseLevelDB(savedir);
-#endif
 
 	throw BaseException(std::string("Database backend ") + name + " not supported.");
 }

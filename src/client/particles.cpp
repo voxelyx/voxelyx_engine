@@ -413,7 +413,6 @@ void ParticleSpawner::spawnParticle(ClientEnvironment *env, float radius,
 			}
 
 			case ParticleParamTypes::AttractorKind::line: {
-				// <https://github.com/luanti-org/luanti/issues/11505#issuecomment-915612700>
 				const auto& lorigin = attractor_origin;
 				v3f ldir = attractor_direction;
 				ldir.normalize();
@@ -429,7 +428,6 @@ void ParticleSpawner::spawnParticle(ClientEnvironment *env, float radius,
 			}
 
 			case ParticleParamTypes::AttractorKind::plane: {
-				// <https://github.com/luanti-org/luanti/issues/11505#issuecomment-915612700>
 				const v3f& porigin = attractor_origin;
 				v3f normal = attractor_direction;
 				normal.normalize();

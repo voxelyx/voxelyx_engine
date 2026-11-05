@@ -1,11 +1,8 @@
-Voxelyx Lua Client Modding API Reference 5.18.0
+Voxelyx Lua Client Modding API Reference 0.1.0
 ==============================================
 
 All functions and tables of the API are in the `core` namespace (e.g.
 `core.register_on_joinplayer`). There are no other namespaces.
-
-* More information at <http://www.luanti.org/>
-* Additional documentation: <https://docs.luanti.org/>
 
 Introduction
 ------------

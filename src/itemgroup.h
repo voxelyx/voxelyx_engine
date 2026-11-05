@@ -14,8 +14,8 @@ typedef std::unordered_map<std::string, int> ItemGroupList;
 /**
  * Entries of a map-like container, sorted by key.
  * Used for serialization so identical definitions always produce identical bytes
- * (iteration order of unordered_map depends on the instance; the multiworld
- * server compares the serialized definitions of different worlds).
+ * (iteration order of unordered_map depends on the instance; the world cluster
+ * compares the serialized definitions of different worlds).
  */
 template<typename Map>
 inline std::vector<const typename Map::value_type *> sortedEntries(const Map &map)

@@ -42,6 +42,19 @@ public:
 class PlayerSAO;
 class RemotePlayer;
 
+/*
+	The state of the players in one world: position, health, inventory and
+	metadata. A PlayerDatabase is bound to one world. It lives in the accounts
+	database, and the state of a player belongs to their account:
+
+	- loadPlayer() makes sure that the player has an account. Players that
+	  authenticate in some other way than with the accounts database (a custom
+	  authentication handler) get one that nobody can log into with the
+	  built-in handler (ACCOUNT_LOCKED_PASSWORD).
+	- savePlayer() doesn't bring back an account that was deleted while the
+	  player was online. The state of such a player is not saved.
+	- Deleting an account deletes its players' state in all worlds.
+*/
 class PlayerDatabase
 {
 public:
@@ -53,6 +66,9 @@ public:
 	virtual void listPlayers(std::vector<std::string> &res) = 0;
 };
 
+/// Password of an account that can't be logged into: it isn't a valid verifier
+constexpr const char *ACCOUNT_LOCKED_PASSWORD = "!";
+
 struct AuthEntry
 {
 	u64 id;
@@ -62,6 +78,13 @@ struct AuthEntry
 	s64 last_login;
 };
 
+/*
+	The accounts database: who the players are (name, password verifier,
+	privileges, last login) and which world each of them is in.
+
+	Worlds are identified by their `world_id` (see world.conf). A world has to be
+	registered before players can be in it.
+*/
 class AuthDatabase
 {
 public:
@@ -70,9 +93,22 @@ public:
 	virtual bool getAuth(const std::string &name, AuthEntry &res) = 0;
 	virtual bool saveAuth(const AuthEntry &authEntry) = 0;
 	virtual bool createAuth(AuthEntry &authEntry) = 0;
+	/// Deletes the account, together with its state in every world
 	virtual bool deleteAuth(const std::string &name) = 0;
 	virtual void listNames(std::vector<std::string> &res) = 0;
 	virtual void reload() = 0;
+
+	/// Makes a world known. Safe to call again, this updates the name.
+	virtual void registerWorld(u32 world_id, const std::string &name) = 0;
+	/// Forgets a world, and the state of all players in it
+	virtual void deleteWorld(u32 world_id) = 0;
+	/// The world the player is in, or was in when they last left (where they
+	/// log in the next time).
+	/// @return false if there is no such account or it is not in any world
+	virtual bool getCurrentWorld(const std::string &name, u32 *world_id) = 0;
+	/// @note does nothing if there is no account of that name. The world must
+	///       have been registered.
+	virtual void setCurrentWorld(const std::string &name, u32 world_id) = 0;
 };
 
 class ModStorageDatabase : public Database

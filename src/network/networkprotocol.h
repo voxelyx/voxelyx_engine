@@ -718,7 +718,7 @@ enum ToClientCommand : u16
 	TOCLIENT_WORLD_CHANGE = 0x65,
 	/*
 		Sent when the server moves this player into a different world
-		that is hosted by the same server (multiworld clusters).
+		that is hosted by the same server (WorldCluster).
 		The new world shares the node/item definitions and media of the old
 		world (the server verifies this), so nothing is re-downloaded.
 

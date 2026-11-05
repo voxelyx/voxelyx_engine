@@ -17,7 +17,7 @@ struct ModIPCStore;
 class Server;
 
 /*
-	Multiworld support: interface between a world's Server instance (which
+	Interface between a world's Server instance (which
 	runs on its own thread with its own Lua state) and the WorldCluster that
 	owns all worlds and the shared network connection.
 
@@ -150,7 +150,9 @@ public:
 	virtual ModIPCStore *getIPCStore() = 0;
 	/// Server-wide account database (thread-safe)
 	virtual AuthDatabase *getAuthDatabase() = 0;
-	/// Server-wide configuration file (mods to load), see doc/multiworld.md
+	/// Directory of the accounts database, where the players of a world are kept too
+	virtual const std::string &getAccountsDir() const = 0;
+	/// Server-wide configuration file (mods to load), see doc/world_format.md
 	virtual const std::string &getServerConfPath() const = 0;
 	virtual BanManager *getBanManager() = 0;
 	virtual ContentIdRegistry *getContentIds() = 0;

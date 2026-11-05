@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 /*
-	Integration tests for multiworld servers (WorldCluster).
+	Integration tests for servers that run several worlds (WorldCluster).
 
 	These start a real cluster of two worlds, connect to it
 	over UDP with a minimal protocol-level client, and check that
@@ -30,9 +30,9 @@
 #include "network/networkprotocol.h"
 #include "network/peerhandler.h"
 #include "network/socket.h"
-#include "multiworld/world_cluster.h"
-#include "multiworld/shared_auth.h"
-#include "multiworld/server_config.h"
+#include "worlds/world_cluster.h"
+#include "worlds/shared_auth.h"
+#include "worlds/server_config.h"
 #include "database/database.h"
 #include "database/database-dummy.h"
 #include "serverenvironment.h"
@@ -49,11 +49,11 @@
 #include "util/auth.h"
 #include "util/numeric.h"
 
-class TestMultiworld : public TestBase
+class TestWorlds : public TestBase
 {
 public:
-	TestMultiworld() { TestManager::registerTestModule(this); }
-	const char *getName() { return "TestMultiworld"; }
+	TestWorlds() { TestManager::registerTestModule(this); }
+	const char *getName() { return "TestWorlds"; }
 
 	void runTests(IGameDef *gamedef);
 
@@ -66,9 +66,9 @@ public:
 	void testWorldIds();
 };
 
-static TestMultiworld g_test_instance;
+static TestWorlds g_test_instance;
 
-void TestMultiworld::runTests(IGameDef *gamedef)
+void TestWorlds::runTests(IGameDef *gamedef)
 {
 	TEST(testWorldConnection);
 	TEST(testSharedAuthDatabase);
@@ -81,7 +81,7 @@ void TestMultiworld::runTests(IGameDef *gamedef)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void TestMultiworld::testWorldConnection()
+void TestWorlds::testWorldConnection()
 {
 	WorldConnection con;
 	NetworkPacket out;
@@ -128,7 +128,7 @@ void TestMultiworld::testWorldConnection()
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void TestMultiworld::testSharedAuthDatabase()
+void TestWorlds::testSharedAuthDatabase()
 {
 	// The worlds of a server use one account database from different threads
 	SharedAuthDatabase db(std::make_unique<AuthDatabaseDummy>());
@@ -174,11 +174,27 @@ void TestMultiworld::testSharedAuthDatabase()
 
 namespace {
 
+// Name of the world the accounts database says a player is in, "" if none
+std::string loginWorldOf(WorldCluster &cluster, const std::string &player)
+{
+	u32 id;
+	if (!cluster.getAuthDatabase()->getCurrentWorld(player, &id))
+		return "";
+	for (const std::string &name : cluster.getWorldNames())
+		if (cluster.getWorldServer(name)->getWorld()->getId() == id)
+			return name;
+	return "";
+}
+
+}
+
+namespace {
+
 // Gives the cluster tests their own settings state
 struct SettingsGuard {
 	bool old_empty_pw = g_settings->getBool("disallow_empty_password");
 	bool old_random_order = g_settings->getBool("random_mod_load_order");
-	std::string old_worlds_dir = g_settings->get("multiworld_dir");
+	std::string old_worlds_dir = g_settings->get("worlds_dir");
 	// The mods of the test servers: just enough for a map generator to work
 	std::string mods_dir = fs::TempPath() + DIR_DELIM + "voxelyx_mw_mods_" +
 		std::to_string(porting::getTimeMs());
@@ -212,12 +228,12 @@ struct SettingsGuard {
 		g_settings->setBool("random_mod_load_order", false);
 	}
 	// World IDs are given out per worlds directory
-	void worldsDir(const std::string &dir) { g_settings->set("multiworld_dir", dir); }
+	void worldsDir(const std::string &dir) { g_settings->set("worlds_dir", dir); }
 	~SettingsGuard()
 	{
 		g_settings->setBool("disallow_empty_password", old_empty_pw);
 		g_settings->setBool("random_mod_load_order", old_random_order);
-		g_settings->set("multiworld_dir", old_worlds_dir);
+		g_settings->set("worlds_dir", old_worlds_dir);
 #ifdef _WIN32
 		_putenv_s("VOXELYX_MOD_PATH", "");
 #else
@@ -229,11 +245,11 @@ struct SettingsGuard {
 
 }
 
-void TestMultiworld::testDefaultWorldIsCreated()
+void TestWorlds::testDefaultWorldIsCreated()
 {
 	SettingsGuard guard;
 
-	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_multiworld_new_" +
+	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_worlds_new_" +
 		std::to_string(porting::getTimeMs());
 	fs::RecursiveDelete(root);
 	UASSERT(fs::CreateAllDirs(root));
@@ -242,7 +258,6 @@ void TestMultiworld::testDefaultWorldIsCreated()
 	cfg.server_dir = root;
 	cfg.worlds_dir = root + DIR_DELIM + "worlds";
 	guard.worldsDir(cfg.worlds_dir);
-	cfg.state_path = root + DIR_DELIM + "players.txt";
 	cfg.ban_path = root + DIR_DELIM + "ipban.txt";
 	// No worlds exist and none is asked for: like a single world server does,
 	// the cluster creates the first world.
@@ -287,8 +302,8 @@ void TestMultiworld::testDefaultWorldIsCreated()
 			std::vector<std::string> names;
 			cluster.getAuthDatabase()->listNames(names); // opens the file
 		}
-		UASSERT(fs::PathExists(root + DIR_DELIM "auth.sqlite"));
-		UASSERT(!fs::PathExists(cfg.worlds_dir + DIR_DELIM "main" DIR_DELIM "auth.sqlite"));
+		UASSERT(fs::PathExists(root + DIR_DELIM "accounts.sqlite"));
+		UASSERT(!fs::PathExists(cfg.worlds_dir + DIR_DELIM "main" DIR_DELIM "accounts.sqlite"));
 	}
 
 	// A named default world that doesn't exist is created next to the others
@@ -561,7 +576,7 @@ void giveItems(Server *server, const std::string &name, const std::string &item,
 void makeWorld(const std::string &dir, const std::string &name, u32 id)
 {
 	fs::CreateAllDirs(dir);
-	std::string conf = "backend = sqlite3\nplayer_backend = sqlite3\n"
+	std::string conf = "backend = sqlite3\n"
 		"mod_storage_backend = sqlite3\nworld_name = " +
 		name + "\nworld_id = " + std::to_string(id) + "\n";
 	UASSERT(fs::safeWriteToFile(dir + DIR_DELIM + "world.conf", conf));
@@ -569,10 +584,10 @@ void makeWorld(const std::string &dir, const std::string &name, u32 id)
 
 }
 
-void TestMultiworld::testCluster()
+void TestWorlds::testCluster()
 {
 
-	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_multiworld_test_" +
+	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_worlds_test_" +
 		std::to_string(porting::getTimeMs());
 	fs::RecursiveDelete(root);
 	makeWorld(root + DIR_DELIM + "worlds" + DIR_DELIM + "alpha", "alpha", 1);
@@ -600,7 +615,6 @@ void TestMultiworld::testCluster()
 	cfg.worlds_dir = root + DIR_DELIM + "worlds";
 	guard.worldsDir(cfg.worlds_dir);
 	cfg.default_world = "alpha";
-	cfg.state_path = root + DIR_DELIM + "players.txt";
 	cfg.ban_path = root + DIR_DELIM + "ipban.txt";
 
 	const u16 port = 41000 + (porting::getTimeMs() % 2000);
@@ -633,7 +647,7 @@ void TestMultiworld::testCluster()
 			std::vector<std::string> names;
 			auth->listNames(names); // opens the file
 		}
-		UASSERT(fs::PathExists(root + DIR_DELIM "auth.sqlite"));
+		UASSERT(fs::PathExists(root + DIR_DELIM "accounts.sqlite"));
 
 		/*
 			There are no mods of single worlds: worldmods are ignored, everything
@@ -688,7 +702,7 @@ void TestMultiworld::testCluster()
 			}
 			// Both 600 ms busy loops overlapped for most of their duration
 			const s64 overlap = std::min(end[0], end[1]) - std::max(start[0], start[1]);
-			infostream << "multiworld: busy loops overlapped for " << overlap / 1000
+			infostream << "worlds: busy loops overlapped for " << overlap / 1000
 				<< " ms" << std::endl;
 			UASSERT(overlap > 300000);
 		}
@@ -788,9 +802,7 @@ void TestMultiworld::testCluster()
 		UASSERT(!queryPlayer(alpha, "mwtester").has_peer);
 
 		// The world they are in is remembered for the next login
-		std::string state;
-		UASSERT(fs::ReadFile(cfg.state_path, state));
-		UASSERT(state.find("mwtester\tbeta") != std::string::npos);
+		UASSERTEQ(std::string, loginWorldOf(cluster, "mwtester"), "beta");
 
 		/*
 			And straight back, immediately. alpha may still be cleaning up the
@@ -840,10 +852,8 @@ void TestMultiworld::testCluster()
 				}));
 			}
 
-			std::string st;
 			UASSERT(waitFor([&] {
-				return fs::ReadFile(cfg.state_path, st) &&
-					st.find("oldclient\tbeta") != std::string::npos;
+				return loginWorldOf(cluster, "oldclient") == "beta";
 			}));
 
 			// Coming back, the server routes the player to beta. The account is the
@@ -901,11 +911,11 @@ void TestMultiworld::testCluster()
 	fs::RecursiveDelete(root);
 }
 
-void TestMultiworld::testInventoryFollowsPlayer()
+void TestWorlds::testInventoryFollowsPlayer()
 {
 	SettingsGuard guard;
 
-	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_multiworld_inv_" +
+	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_worlds_inv_" +
 		std::to_string(porting::getTimeMs());
 	fs::RecursiveDelete(root);
 	makeWorld(root + DIR_DELIM + "worlds" + DIR_DELIM + "alpha", "alpha", 1);
@@ -916,7 +926,6 @@ void TestMultiworld::testInventoryFollowsPlayer()
 	cfg.worlds_dir = root + DIR_DELIM + "worlds";
 	guard.worldsDir(cfg.worlds_dir);
 	cfg.default_world = "alpha";
-	cfg.state_path = root + DIR_DELIM + "players.txt";
 	cfg.ban_path = root + DIR_DELIM + "ipban.txt";
 
 	const u16 port = 44000 + (porting::getTimeMs() % 1000);
@@ -975,11 +984,11 @@ void TestMultiworld::testInventoryFollowsPlayer()
 	fs::RecursiveDelete(root);
 }
 
-void TestMultiworld::testCreateAndRemoveWorlds()
+void TestWorlds::testCreateAndRemoveWorlds()
 {
 	SettingsGuard guard;
 
-	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_multiworld_cr_" +
+	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_worlds_cr_" +
 		std::to_string(porting::getTimeMs());
 	fs::RecursiveDelete(root);
 	makeWorld(root + DIR_DELIM + "worlds" + DIR_DELIM + "alpha", "alpha", 1);
@@ -989,7 +998,6 @@ void TestMultiworld::testCreateAndRemoveWorlds()
 	cfg.worlds_dir = root + DIR_DELIM + "worlds";
 	guard.worldsDir(cfg.worlds_dir);
 	cfg.default_world = "alpha";
-	cfg.state_path = root + DIR_DELIM + "players.txt";
 	cfg.ban_path = root + DIR_DELIM + "ipban.txt";
 
 	{
@@ -1074,11 +1082,11 @@ void TestMultiworld::testCreateAndRemoveWorlds()
 	fs::RecursiveDelete(root);
 }
 
-void TestMultiworld::testWorldIds()
+void TestWorlds::testWorldIds()
 {
 	SettingsGuard guard;
 
-	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_multiworld_ids_" +
+	const std::string root = fs::TempPath() + DIR_DELIM + "voxelyx_worlds_ids_" +
 		std::to_string(porting::getTimeMs());
 	fs::RecursiveDelete(root);
 	const std::string worlds = root + DIR_DELIM + "worlds";
@@ -1108,7 +1116,6 @@ void TestMultiworld::testWorldIds()
 	cfg.server_dir = root;
 	cfg.worlds_dir = worlds;
 	cfg.default_world = "a";
-	cfg.state_path = root + DIR_DELIM + "players.txt";
 	cfg.ban_path = root + DIR_DELIM + "ipban.txt";
 	const u16 port = 45000 + (porting::getTimeMs() % 2000);
 	bool threw = false;

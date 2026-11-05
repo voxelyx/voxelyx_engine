@@ -26,7 +26,6 @@ enum RemotePlayerChatResult
 */
 class RemotePlayer : public Player
 {
-	friend class PlayerDatabaseFiles;
 
 public:
 	RemotePlayer(const std::string &name, IItemDefManager *idef);

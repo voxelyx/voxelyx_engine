@@ -69,12 +69,12 @@ jobs:
       labels: |
         org.opencontainers.image.title=Voxelyx
         org.opencontainers.image.vendor=Voxelyx
-        org.opencontainers.image.description=Voxelyx (formerly Minetest) is an open source voxel game-creation platform with easy modding and game creation
+        org.opencontainers.image.description=Voxelyx is an open source voxel game-creation platform with easy modding and game creation
         org.opencontainers.image.licenses=LGPL-2.1-only
       annotations: |
         org.opencontainers.image.title=Voxelyx
         org.opencontainers.image.vendor=Voxelyx
-        org.opencontainers.image.description=Voxelyx (formerly Minetest) is an open source voxel game-creation platform with easy modding and game creation
+        org.opencontainers.image.description=Voxelyx is an open source voxel game-creation platform with easy modding and game creation
         org.opencontainers.image.licenses=LGPL-2.1-only
 
     secrets:

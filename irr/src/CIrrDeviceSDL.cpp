@@ -352,7 +352,6 @@ CIrrDeviceSDL::CIrrDeviceSDL(const SIrrlichtCreationParameters &param) :
 		SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 
 		// Disabling the compositor is not a good idea in windowed mode.
-		// see <https://github.com/luanti-org/luanti/issues/14596>
 		SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
 
 #if defined(_IRR_COMPILE_WITH_JOYSTICK_EVENTS_)

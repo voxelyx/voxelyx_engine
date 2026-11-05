@@ -1,13 +1,17 @@
 <div align="center">
     <img src="textures/base/pack/logo.png" width="32%">
-    <h1>Voxelyx (Luanti fork)</h1>
+    <h1>Voxelyx</h1>
     <a href="https://github.com/voxelyx/voxelyx_engine/actions?query=event%3Apush"><img src="https://github.com/voxelyx/voxelyx_engine/workflows/linux/badge.svg" alt="Build status"></a>
-    <a href="https://hosted.weblate.org/engage/minetest/?utm_source=widget"><img src="https://hosted.weblate.org/widgets/minetest/-/svg-badge.svg" alt="Translation status"></a>
     <a href="https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html"><img src="https://img.shields.io/badge/license-LGPLv2.1%2B-blue.svg" alt="License"></a>
 </div>
 <br>
 
-Voxelyx, a Luanti fork, is a free open-source voxel sandbox engine with easy modding.
+Voxelyx is a free open-source voxel sandbox engine with easy modding.
+
+It is derived from [Luanti](https://github.com/luanti-org/luanti) (formerly
+Minetest), and contains code, textures and sounds by its authors, who keep their
+copyright and licenses (see [LICENSE.txt](LICENSE.txt)). The code has been
+modified by the Voxelyx authors since 2026; Voxelyx is developed separately.
 
 - Copyright (C) 2026 Helenah, Helena Bolan <helenah2025@proton.me>
 - Copyright (C) 2010-2026 Perttu Ahola <celeron55@gmail.com>
@@ -28,9 +32,6 @@ Table of Contents
 
 Further documentation
 ----------------------
-- Website: https://www.luanti.org/
-- Voxelyx Documentation: https://docs.luanti.org/
-- Forum: https://forum.luanti.org/
 - GitHub: https://github.com/voxelyx/voxelyx_engine/
 - [Developer documentation](doc/developing/)
 - [doc/](doc/) directory of source distribution
@@ -135,7 +136,7 @@ Docker
 
 Version scheme
 --------------
-We use `major.minor.patch` since 5.0.0-dev. Prior to that we used `0.major.minor`.
+We use `major.minor.patch`.
 
 - Major is incremented when the release contains breaking changes, all other
 numbers are set to 0.
@@ -144,6 +145,5 @@ patch is set to 0.
 - Patch is incremented when the release only contains bugfixes and very
 minor/trivial features considered necessary.
 
-Since 5.0.0-dev and 0.4.17-dev, the dev notation refers to the next release,
-i.e.: 5.0.0-dev is the development version leading to 5.0.0.
-Prior to that we used `previous_version-dev`.
+The dev notation refers to the next release, i.e.: 0.2.0-dev is the
+development version leading to 0.2.0.

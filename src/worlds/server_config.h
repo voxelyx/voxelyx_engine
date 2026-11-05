@@ -18,8 +18,9 @@
 	  mods directories is loaded, there are no games and no mods of
 	  individual worlds. (= <virtual path> picks one of several mods of
 	  the same name.)
-	- auth_backend = sqlite3 | files | ...       where the accounts are kept
-	  (<user dir>/auth.sqlite, <user dir>/auth.txt, ...). Default: sqlite3.
+	- auth_backend = sqlite3 | postgresql | dummy   where the accounts, and the
+	  players in each world, are kept (<user dir>/accounts.sqlite).
+	  Default: sqlite3.
 	- pgsql_auth_connection                     for the postgresql backend
 */
 
@@ -41,5 +42,5 @@ bool addMissingServerConfKeys(const std::string &path,
 		const std::string &default_world);
 
 /// Directory that contains the worlds of a dedicated server: the setting
-/// multiworld_dir, else <user dir>/worlds
+/// worlds_dir, else <user dir>/worlds
 std::string getWorldsDir();

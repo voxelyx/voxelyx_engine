@@ -21,10 +21,10 @@ public:
 	// Calls on_shutdown handlers
 	void on_shutdown();
 
-	// Calls core.register_on_worlds_changed handlers (multiworld)
+	// Calls core.register_on_worlds_changed handlers
 	void on_worlds_changed(const std::string &event, const std::string &world,
 			bool ok, const std::string &err);
-	// Calls core.register_on_world_message handlers (multiworld)
+	// Calls core.register_on_world_message handlers
 	void on_world_message(const std::string &from_world,
 		const std::string &channel, const std::string &message);
 

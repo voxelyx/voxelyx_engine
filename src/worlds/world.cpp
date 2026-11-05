@@ -1,13 +1,13 @@
 // Voxelyx
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-#include "multiworld/world.h"
+#include "worlds/world.h"
 #include "content/worlds.h" // readWorldId, WORLD_CONF_FILENAME
 #include "exceptions.h"
 #include "filesys.h"
 #include "log.h"
 #include "server.h"
-#include "multiworld/world_connection.h"
+#include "worlds/world_connection.h"
 #include "util/string.h" // is_yes
 
 World::World(const std::string &path) :

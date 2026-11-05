@@ -17,7 +17,7 @@
 #include <cassert>
 
 // When to print messages when the database is being held locked by another process
-// Note: I've seen occasional delays of over 250ms while running minetestmapper.
+// Note: occasional delays of over 250ms are seen while a map tool reads the database.
 enum {
 	BUSY_INFO_TRESHOLD    = 100,   // Print first informational message.
 	BUSY_WARNING_TRESHOLD = 250,   // Print warning message. Significant lag.
@@ -80,8 +80,13 @@ int Database_SQLite3::busyHandler(void *data, int count)
 
 	prev_time = cur_time;
 
-	// Make sqlite transaction fail if delay exceeds BUSY_FATAL_TRESHOLD
-	return total_diff < BUSY_FATAL_TRESHOLD;
+	if (total_diff >= BUSY_FATAL_TRESHOLD)
+		return 0; // Make sqlite transaction fail
+
+	// Retrying right away would only keep the CPU from whoever has the lock.
+	// Back off, like SQLite's own busy timeout does: 1 ms at first, up to 20 ms.
+	sqlite3_sleep(count < 10 ? 1 : (count < 50 ? 5 : 20));
+	return 1;
 }
 
 
@@ -105,6 +110,15 @@ void Database_SQLite3::endSave()
 	SQLRES(sqlite3_step(m_stmt_end), SQLITE_DONE,
 		"Failed to commit SQLite3 transaction");
 	sqlite3_reset(m_stmt_end);
+}
+
+void Database_SQLite3::rollbackSave() noexcept
+{
+	if (!m_database)
+		return;
+	// Fails if there is no transaction, which is fine. Statements that are
+	// still running are aborted by this.
+	sqlite3_exec(m_database, "ROLLBACK;", NULL, NULL, NULL);
 }
 
 void Database_SQLite3::openDatabase()
@@ -134,7 +148,7 @@ void Database_SQLite3::openDatabase()
 	SQLOK(sqlite3_busy_handler(m_database, Database_SQLite3::busyHandler,
 		m_busy_handler_data), "Failed to set SQLite3 busy handler");
 
-	if (needs_create) {
+	if (needs_create || schemaMissing()) {
 		createDatabase();
 	}
 
@@ -152,7 +166,7 @@ void Database_SQLite3::verifyDatabase()
 
 	openDatabase();
 
-	PREPARE_STATEMENT(begin, "BEGIN;");
+	PREPARE_STATEMENT(begin, m_begin_sql);
 	PREPARE_STATEMENT(end, "COMMIT;");
 
 	initStatements();
@@ -348,221 +362,373 @@ void MapDatabaseSQLite3::listAllLoadableBlocks(std::vector<v3s16> &dst)
 }
 
 /*
+ * Accounts database (accounts.sqlite)
+ */
+
+namespace {
+
+// Everything below is executed in one transaction when the database is created.
+// SQLite only has five storage classes and ignores sizes like VARCHAR(32), so
+// the types are the ones SQLite really stores. Times are seconds since the Unix
+// epoch (UTC), in INTEGER columns.
+const char *const ACCOUNTS_SCHEMA = R"SQL(
+CREATE TABLE `worlds` (
+	-- The world_id of the world (world.conf). The name is only to help whoever
+	-- reads the database: the name of a world can change, and a name can be used
+	-- again by another world later, the id identifies.
+	`id`   INTEGER PRIMARY KEY,
+	`name` TEXT NOT NULL
+);
+
+CREATE TABLE `accounts` (
+	-- Not reused after an account is deleted
+	`id`               INTEGER PRIMARY KEY AUTOINCREMENT,
+	`name`             TEXT    NOT NULL UNIQUE CHECK (`name` <> ''),
+	-- Verifier, as made by the authentication handler. Opaque to the database:
+	-- it can be empty (no password), or ACCOUNT_LOCKED_PASSWORD.
+	`password`         TEXT    NOT NULL,
+	`created_at`       INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+	-- NULL: has never logged in
+	`last_login`       INTEGER CHECK (`last_login` IS NULL OR `last_login` > 0),
+	-- The world the player is in, or last was in. NULL: none yet (or the world
+	-- is gone), the player starts in the default world.
+	`current_world_id` INTEGER REFERENCES `worlds` (`id`) ON DELETE SET NULL
+);
+CREATE INDEX `accounts_current_world_id` ON `accounts` (`current_world_id`);
+
+CREATE TABLE `privileges` (
+	`account_id` INTEGER NOT NULL REFERENCES `accounts` (`id`) ON DELETE CASCADE,
+	-- Privileges are defined by mods at run time, so they are not a table of
+	-- their own: one that is not defined (any more) is still kept.
+	`privilege`  TEXT    NOT NULL CHECK (`privilege` <> ''),
+	PRIMARY KEY (`account_id`, `privilege`)
+) WITHOUT ROWID;
+
+CREATE TABLE `world_players` (
+	-- Surrogate key, so that the tables below don't have to repeat
+	-- (account, world), let alone a name, in every row.
+	`id`         INTEGER PRIMARY KEY,
+	`account_id` INTEGER NOT NULL REFERENCES `accounts` (`id`) ON DELETE CASCADE,
+	`world_id`   INTEGER NOT NULL REFERENCES `worlds` (`id`)   ON DELETE CASCADE,
+	`pitch`      REAL    NOT NULL,
+	`yaw`        REAL    NOT NULL,
+	`pos_x`      REAL    NOT NULL,
+	`pos_y`      REAL    NOT NULL,
+	`pos_z`      REAL    NOT NULL,
+	`hp`         INTEGER NOT NULL CHECK (`hp`     BETWEEN 0 AND 65535),
+	`breath`     INTEGER NOT NULL CHECK (`breath` BETWEEN 0 AND 65535),
+	`created_at` INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+	`updated_at` INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+	UNIQUE (`account_id`, `world_id`)
+);
+CREATE INDEX `world_players_world_id` ON `world_players` (`world_id`);
+
+-- Keys and values are arbitrary byte strings (Lua strings), hence BLOB: as TEXT
+-- a value with a NUL byte in it can't be read back.
+CREATE TABLE `world_player_metadata` (
+	`world_player_id` INTEGER NOT NULL
+		REFERENCES `world_players` (`id`) ON DELETE CASCADE,
+	`key`             BLOB    NOT NULL,
+	`value`           BLOB    NOT NULL,
+	PRIMARY KEY (`world_player_id`, `key`)
+) WITHOUT ROWID;
+
+CREATE TABLE `world_player_inventories` (
+	`world_player_id` INTEGER NOT NULL
+		REFERENCES `world_players` (`id`) ON DELETE CASCADE,
+	-- Position of the list in the inventory
+	`list_index`      INTEGER NOT NULL CHECK (`list_index` >= 0),
+	`name`            TEXT    NOT NULL,
+	`width`           INTEGER NOT NULL CHECK (`width` >= 0),
+	`size`            INTEGER NOT NULL CHECK (`size`  >= 0),
+	PRIMARY KEY (`world_player_id`, `list_index`),
+	UNIQUE (`world_player_id`, `name`)
+) WITHOUT ROWID;
+
+-- Only the slots that hold something. A slot that has no row is empty.
+CREATE TABLE `world_player_inventory_items` (
+	`world_player_id` INTEGER NOT NULL,
+	`list_index`      INTEGER NOT NULL,
+	`slot`            INTEGER NOT NULL CHECK (`slot` >= 0),
+	-- A serialized ItemStack
+	`item`            TEXT    NOT NULL CHECK (`item` <> ''),
+	PRIMARY KEY (`world_player_id`, `list_index`, `slot`),
+	FOREIGN KEY (`world_player_id`, `list_index`)
+		REFERENCES `world_player_inventories` (`world_player_id`, `list_index`)
+		ON DELETE CASCADE
+) WITHOUT ROWID;
+)SQL";
+
+} // namespace
+
+AccountsDatabase_SQLite3::AccountsDatabase_SQLite3(const std::string &savedir) :
+	Database_SQLite3(savedir, "accounts")
+{
+	m_begin_sql = "BEGIN IMMEDIATE;";
+}
+
+AccountsDatabase_SQLite3::~AccountsDatabase_SQLite3()
+{
+	FINALIZE_STATEMENT(account_id)
+}
+
+int AccountsDatabase_SQLite3::getSchemaVersion()
+{
+	sqlite3_stmt *m_stmt_tmp = nullptr;
+	PREPARE_STATEMENT(tmp, "PRAGMA user_version;");
+	int version = 0;
+	try {
+		if (sqlite3_vrfy_step(sqlite3_step(m_stmt_tmp), "Failed to read the schema version"))
+			version = sqlite_to_int(m_stmt_tmp, 0);
+	} catch (...) {
+		FINALIZE_STATEMENT(tmp)
+		throw;
+	}
+	FINALIZE_STATEMENT(tmp)
+	return version;
+}
+
+bool AccountsDatabase_SQLite3::schemaMissing()
+{
+	const int version = getSchemaVersion();
+	if (version > SCHEMA_VERSION) {
+		throw DatabaseException("The accounts database has schema version " +
+			itos(version) + ", this version only knows up to " +
+			itos(SCHEMA_VERSION) + ". It was made by a newer version.");
+	}
+	return version == 0;
+}
+
+void AccountsDatabase_SQLite3::createDatabase()
+{
+	assert(m_database);
+
+	// IMMEDIATE: if another connection is doing the same, this waits for it.
+	SQLOK(sqlite3_exec(m_database, "BEGIN IMMEDIATE;", NULL, NULL, NULL),
+		"Failed to start creating the accounts database");
+	try {
+		// Whoever had the lock before may have created it
+		if (getSchemaVersion() == 0) {
+			SQLOK(sqlite3_exec(m_database, ACCOUNTS_SCHEMA, NULL, NULL, NULL),
+				"Failed to create the accounts database tables");
+			const std::string pragma = "PRAGMA user_version = " +
+				itos(SCHEMA_VERSION) + ";";
+			SQLOK(sqlite3_exec(m_database, pragma.c_str(), NULL, NULL, NULL),
+				"Failed to set the schema version");
+		}
+		SQLOK(sqlite3_exec(m_database, "COMMIT;", NULL, NULL, NULL),
+			"Failed to commit the accounts database tables");
+	} catch (...) {
+		rollbackSave();
+		throw;
+	}
+}
+
+void AccountsDatabase_SQLite3::initAccountStatements()
+{
+	PREPARE_STATEMENT(account_id, "SELECT `id` FROM `accounts` WHERE `name` = ?");
+}
+
+u64 AccountsDatabase_SQLite3::getAccountId(const std::string &name)
+{
+	str_to_sqlite(m_stmt_account_id, 1, name);
+	u64 id = 0;
+	if (SQLSTEP(m_stmt_account_id, "Failed to look up account"))
+		id = sqlite_to_uint64(m_stmt_account_id, 0);
+	sqlite3_reset(m_stmt_account_id);
+	return id;
+}
+
+/*
  * Player Database
  */
 
-PlayerDatabaseSQLite3::PlayerDatabaseSQLite3(const std::string &savedir):
-	Database_SQLite3(savedir, "players"),
-	PlayerDatabase()
+PlayerDatabaseSQLite3::PlayerDatabaseSQLite3(const std::string &savedir, u32 world_id):
+	AccountsDatabase_SQLite3(savedir),
+	PlayerDatabase(),
+	m_world_id(world_id)
 {
 }
 
 PlayerDatabaseSQLite3::~PlayerDatabaseSQLite3()
 {
+	FINALIZE_STATEMENT(account_add_locked)
 	FINALIZE_STATEMENT(player_load)
-	FINALIZE_STATEMENT(player_add)
-	FINALIZE_STATEMENT(player_update)
+	FINALIZE_STATEMENT(player_upsert)
+	FINALIZE_STATEMENT(player_id)
 	FINALIZE_STATEMENT(player_remove)
 	FINALIZE_STATEMENT(player_list)
-	FINALIZE_STATEMENT(player_add_inventory)
-	FINALIZE_STATEMENT(player_add_inventory_items)
-	FINALIZE_STATEMENT(player_remove_inventory)
-	FINALIZE_STATEMENT(player_remove_inventory_items)
-	FINALIZE_STATEMENT(player_load_inventory)
-	FINALIZE_STATEMENT(player_load_inventory_items)
-	FINALIZE_STATEMENT(player_metadata_load)
-	FINALIZE_STATEMENT(player_metadata_add)
-	FINALIZE_STATEMENT(player_metadata_remove)
-};
-
-
-void PlayerDatabaseSQLite3::createDatabase()
-{
-	assert(m_database);
-
-	// When designing the schema remember that SQLite only has 5 basic data types
-	// and ignores length-limited types like "VARCHAR(32)".
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE IF NOT EXISTS `player` ("
-			"`name` TEXT NOT NULL,"
-			"`pitch` NUMERIC NOT NULL,"
-			"`yaw` NUMERIC NOT NULL,"
-			"`posX` NUMERIC NOT NULL,"
-			"`posY` NUMERIC NOT NULL,"
-			"`posZ` NUMERIC NOT NULL,"
-			"`hp` INT NOT NULL,"
-			"`breath` INT NOT NULL,"
-			"`creation_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-			"`modification_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-			"PRIMARY KEY (`name`));",
-		NULL, NULL, NULL),
-		"Failed to create player table");
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE IF NOT EXISTS `player_metadata` ("
-			"    `player` TEXT NOT NULL,"
-			"    `metadata` TEXT NOT NULL,"
-			"    `value` TEXT NOT NULL,"
-			"    PRIMARY KEY(`player`, `metadata`),"
-			"    FOREIGN KEY (`player`) REFERENCES player (`name`) ON DELETE CASCADE );",
-		NULL, NULL, NULL),
-		"Failed to create player metadata table");
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE IF NOT EXISTS `player_inventories` ("
-			"   `player` TEXT NOT NULL,"
-			"	`inv_id` INT NOT NULL,"
-			"	`inv_width` INT NOT NULL,"
-			"	`inv_name` TEXT NOT NULL DEFAULT '',"
-			"	`inv_size` INT NOT NULL,"
-			"	PRIMARY KEY(player, inv_id),"
-			"   FOREIGN KEY (`player`) REFERENCES player (`name`) ON DELETE CASCADE );",
-		NULL, NULL, NULL),
-		"Failed to create player inventory table");
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE `player_inventory_items` ("
-			"   `player` TEXT NOT NULL,"
-			"	`inv_id` INT NOT NULL,"
-			"	`slot_id` INT NOT NULL,"
-			"	`item` TEXT NOT NULL DEFAULT '',"
-			"	PRIMARY KEY(player, inv_id, slot_id),"
-			"   FOREIGN KEY (`player`) REFERENCES player (`name`) ON DELETE CASCADE );",
-		NULL, NULL, NULL),
-		"Failed to create player inventory items table");
+	FINALIZE_STATEMENT(inventory_load)
+	FINALIZE_STATEMENT(inventory_items_load)
+	FINALIZE_STATEMENT(inventory_add)
+	FINALIZE_STATEMENT(inventory_item_add)
+	FINALIZE_STATEMENT(inventory_remove)
+	FINALIZE_STATEMENT(metadata_load)
+	FINALIZE_STATEMENT(metadata_add)
+	FINALIZE_STATEMENT(metadata_remove)
 }
 
 void PlayerDatabaseSQLite3::initStatements()
 {
-	PREPARE_STATEMENT(player_load, "SELECT `pitch`, `yaw`, `posX`, `posY`, `posZ`, `hp`, "
-		"`breath`"
-		"FROM `player` WHERE `name` = ?")
-	PREPARE_STATEMENT(player_add, "INSERT INTO `player` (`name`, `pitch`, `yaw`, `posX`, "
-		"`posY`, `posZ`, `hp`, `breath`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-	PREPARE_STATEMENT(player_update, "UPDATE `player` SET `pitch` = ?, `yaw` = ?, "
-			"`posX` = ?, `posY` = ?, `posZ` = ?, `hp` = ?, `breath` = ?, "
-			"`modification_date` = CURRENT_TIMESTAMP WHERE `name` = ?")
-	PREPARE_STATEMENT(player_remove, "DELETE FROM `player` WHERE `name` = ?")
-	PREPARE_STATEMENT(player_list, "SELECT `name` FROM `player`")
+	initAccountStatements();
 
-	PREPARE_STATEMENT(player_add_inventory, "INSERT INTO `player_inventories` "
-		"(`player`, `inv_id`, `inv_width`, `inv_name`, `inv_size`) VALUES (?, ?, ?, ?, ?)")
-	PREPARE_STATEMENT(player_add_inventory_items, "INSERT INTO `player_inventory_items` "
-		"(`player`, `inv_id`, `slot_id`, `item`) VALUES (?, ?, ?, ?)")
-	PREPARE_STATEMENT(player_remove_inventory, "DELETE FROM `player_inventories` "
-		"WHERE `player` = ?")
-	PREPARE_STATEMENT(player_remove_inventory_items, "DELETE FROM `player_inventory_items` "
-		"WHERE `player` = ?")
-	PREPARE_STATEMENT(player_load_inventory, "SELECT `inv_id`, `inv_width`, `inv_name`, "
-		"`inv_size` FROM `player_inventories` WHERE `player` = ? ORDER BY inv_id")
-	PREPARE_STATEMENT(player_load_inventory_items, "SELECT `slot_id`, `item` "
-		"FROM `player_inventory_items` WHERE `player` = ? AND `inv_id` = ?")
+	PREPARE_STATEMENT(account_add_locked,
+		"INSERT OR IGNORE INTO `accounts` (`name`, `password`) VALUES (?, ?)");
 
-	PREPARE_STATEMENT(player_metadata_load, "SELECT `metadata`, `value` FROM "
-		"`player_metadata` WHERE `player` = ?")
-	PREPARE_STATEMENT(player_metadata_add, "INSERT INTO `player_metadata` "
-		"(`player`, `metadata`, `value`) VALUES (?, ?, ?)")
-	PREPARE_STATEMENT(player_metadata_remove, "DELETE FROM `player_metadata` "
-		"WHERE `player` = ?")
+	PREPARE_STATEMENT(player_load,
+		"SELECT wp.`id`, wp.`pitch`, wp.`yaw`, wp.`pos_x`, wp.`pos_y`, wp.`pos_z`, "
+		"wp.`hp`, wp.`breath` FROM `world_players` wp "
+		"JOIN `accounts` a ON a.`id` = wp.`account_id` "
+		"WHERE a.`name` = ? AND wp.`world_id` = ?");
+	PREPARE_STATEMENT(player_upsert,
+		"INSERT INTO `world_players` (`account_id`, `world_id`, `pitch`, `yaw`, "
+		"`pos_x`, `pos_y`, `pos_z`, `hp`, `breath`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+		"ON CONFLICT (`account_id`, `world_id`) DO UPDATE SET "
+		"`pitch` = excluded.`pitch`, `yaw` = excluded.`yaw`, "
+		"`pos_x` = excluded.`pos_x`, `pos_y` = excluded.`pos_y`, "
+		"`pos_z` = excluded.`pos_z`, `hp` = excluded.`hp`, "
+		"`breath` = excluded.`breath`, `updated_at` = strftime('%s', 'now')");
+	PREPARE_STATEMENT(player_id,
+		"SELECT `id` FROM `world_players` WHERE `account_id` = ? AND `world_id` = ?");
+	PREPARE_STATEMENT(player_remove,
+		"DELETE FROM `world_players` WHERE `world_id` = ? AND `account_id` = "
+		"(SELECT `id` FROM `accounts` WHERE `name` = ?)");
+	PREPARE_STATEMENT(player_list,
+		"SELECT a.`name` FROM `world_players` wp "
+		"JOIN `accounts` a ON a.`id` = wp.`account_id` "
+		"WHERE wp.`world_id` = ? ORDER BY a.`name`");
+
+	PREPARE_STATEMENT(inventory_load,
+		"SELECT `list_index`, `width`, `name`, `size` FROM `world_player_inventories` "
+		"WHERE `world_player_id` = ? ORDER BY `list_index`");
+	PREPARE_STATEMENT(inventory_items_load,
+		"SELECT `slot`, `item` FROM `world_player_inventory_items` "
+		"WHERE `world_player_id` = ? AND `list_index` = ?");
+	PREPARE_STATEMENT(inventory_add,
+		"INSERT INTO `world_player_inventories` "
+		"(`world_player_id`, `list_index`, `width`, `name`, `size`) VALUES (?, ?, ?, ?, ?)");
+	PREPARE_STATEMENT(inventory_item_add,
+		"INSERT INTO `world_player_inventory_items` "
+		"(`world_player_id`, `list_index`, `slot`, `item`) VALUES (?, ?, ?, ?)");
+	// The items go with it (ON DELETE CASCADE)
+	PREPARE_STATEMENT(inventory_remove,
+		"DELETE FROM `world_player_inventories` WHERE `world_player_id` = ?");
+
+	PREPARE_STATEMENT(metadata_load,
+		"SELECT `key`, `value` FROM `world_player_metadata` WHERE `world_player_id` = ?");
+	PREPARE_STATEMENT(metadata_add,
+		"INSERT INTO `world_player_metadata` (`world_player_id`, `key`, `value`) "
+		"VALUES (?, ?, ?)");
+	PREPARE_STATEMENT(metadata_remove,
+		"DELETE FROM `world_player_metadata` WHERE `world_player_id` = ?");
 }
 
-bool PlayerDatabaseSQLite3::playerDataExists(const std::string &name)
+void PlayerDatabaseSQLite3::provisionAccount(const std::string &name)
 {
-	verifyDatabase();
-	str_to_sqlite(m_stmt_player_load, 1, name);
-	bool exists = SQLSTEP(m_stmt_player_load, "");
-	sqlite3_reset(m_stmt_player_load);
-	return exists;
+	if (getAccountId(name) != 0)
+		return;
+	// Written in a transaction of its own, the caller is only reading
+	transaction([&] {
+		str_to_sqlite(m_stmt_account_add_locked, 1, name);
+		str_to_sqlite(m_stmt_account_add_locked, 2, ACCOUNT_LOCKED_PASSWORD);
+		sqlite3_vrfy(sqlite3_step(m_stmt_account_add_locked), SQLITE_DONE);
+		sqlite3_reset(m_stmt_account_add_locked);
+	});
+	infostream << "PlayerDatabaseSQLite3: added a locked account for \"" << name
+		<< "\", which has none" << std::endl;
 }
 
 void PlayerDatabaseSQLite3::savePlayer(RemotePlayer *player)
 {
-	PlayerSAO* sao = player->getPlayerSAO();
+	PlayerSAO *sao = player->getPlayerSAO();
 	sanity_check(sao);
 
+	verifyDatabase();
+
+	const std::string &name = player->getName();
 	const v3f &pos = sao->getBasePosition();
-	// Begin save in brace is mandatory
-	if (!playerDataExists(player->getName())) {
-		beginSave();
-		str_to_sqlite(m_stmt_player_add, 1, player->getName());
-		double_to_sqlite(m_stmt_player_add, 2, sao->getLookPitch());
-		double_to_sqlite(m_stmt_player_add, 3, sao->getRotation().Y);
-		double_to_sqlite(m_stmt_player_add, 4, pos.X);
-		double_to_sqlite(m_stmt_player_add, 5, pos.Y);
-		double_to_sqlite(m_stmt_player_add, 6, pos.Z);
-		int64_to_sqlite(m_stmt_player_add, 7, sao->getHP());
-		int64_to_sqlite(m_stmt_player_add, 8, sao->getBreath());
 
-		sqlite3_vrfy(sqlite3_step(m_stmt_player_add), SQLITE_DONE);
-		sqlite3_reset(m_stmt_player_add);
-	} else {
-		beginSave();
-		double_to_sqlite(m_stmt_player_update, 1, sao->getLookPitch());
-		double_to_sqlite(m_stmt_player_update, 2, sao->getRotation().Y);
-		double_to_sqlite(m_stmt_player_update, 3, pos.X);
-		double_to_sqlite(m_stmt_player_update, 4, pos.Y);
-		double_to_sqlite(m_stmt_player_update, 5, pos.Z);
-		int64_to_sqlite(m_stmt_player_update, 6, sao->getHP());
-		int64_to_sqlite(m_stmt_player_update, 7, sao->getBreath());
-		str_to_sqlite(m_stmt_player_update, 8, player->getName());
-
-		sqlite3_vrfy(sqlite3_step(m_stmt_player_update), SQLITE_DONE);
-		sqlite3_reset(m_stmt_player_update);
-	}
-
-	// Write player inventories
-	str_to_sqlite(m_stmt_player_remove_inventory, 1, player->getName());
-	sqlite3_vrfy(sqlite3_step(m_stmt_player_remove_inventory), SQLITE_DONE);
-	sqlite3_reset(m_stmt_player_remove_inventory);
-
-	str_to_sqlite(m_stmt_player_remove_inventory_items, 1, player->getName());
-	sqlite3_vrfy(sqlite3_step(m_stmt_player_remove_inventory_items), SQLITE_DONE);
-	sqlite3_reset(m_stmt_player_remove_inventory_items);
-
-	const auto &inventory_lists = player->inventory.getLists();
-	std::ostringstream oss;
-	for (u16 i = 0; i < inventory_lists.size(); i++) {
-		const InventoryList *list = inventory_lists[i];
-
-		str_to_sqlite(m_stmt_player_add_inventory, 1, player->getName());
-		int_to_sqlite(m_stmt_player_add_inventory, 2, i);
-		int_to_sqlite(m_stmt_player_add_inventory, 3, list->getWidth());
-		str_to_sqlite(m_stmt_player_add_inventory, 4, list->getName());
-		int_to_sqlite(m_stmt_player_add_inventory, 5, list->getSize());
-		sqlite3_vrfy(sqlite3_step(m_stmt_player_add_inventory), SQLITE_DONE);
-		sqlite3_reset(m_stmt_player_add_inventory);
-
-		for (u32 j = 0; j < list->getSize(); j++) {
-			oss.str("");
-			oss.clear();
-			list->getItem(j).serialize(oss);
-			std::string itemStr = oss.str();
-
-			str_to_sqlite(m_stmt_player_add_inventory_items, 1, player->getName());
-			int_to_sqlite(m_stmt_player_add_inventory_items, 2, i);
-			int_to_sqlite(m_stmt_player_add_inventory_items, 3, j);
-			str_to_sqlite(m_stmt_player_add_inventory_items, 4, itemStr);
-			sqlite3_vrfy(sqlite3_step(m_stmt_player_add_inventory_items), SQLITE_DONE);
-			sqlite3_reset(m_stmt_player_add_inventory_items);
+	bool saved = true;
+	transaction([&] {
+		const u64 account_id = getAccountId(name);
+		if (account_id == 0) {
+			// The account was deleted while the player was online. Don't bring it back.
+			warningstream << "PlayerDatabaseSQLite3: \"" << name << "\" has no account, "
+				"not saving their state" << std::endl;
+			saved = false;
+			return;
 		}
-	}
 
-	str_to_sqlite(m_stmt_player_metadata_remove, 1, player->getName());
-	sqlite3_vrfy(sqlite3_step(m_stmt_player_metadata_remove), SQLITE_DONE);
-	sqlite3_reset(m_stmt_player_metadata_remove);
+		int64_to_sqlite(m_stmt_player_upsert, 1, account_id);
+		int64_to_sqlite(m_stmt_player_upsert, 2, m_world_id);
+		double_to_sqlite(m_stmt_player_upsert, 3, sao->getLookPitch());
+		double_to_sqlite(m_stmt_player_upsert, 4, sao->getRotation().Y);
+		double_to_sqlite(m_stmt_player_upsert, 5, pos.X);
+		double_to_sqlite(m_stmt_player_upsert, 6, pos.Y);
+		double_to_sqlite(m_stmt_player_upsert, 7, pos.Z);
+		int64_to_sqlite(m_stmt_player_upsert, 8, sao->getHP());
+		int64_to_sqlite(m_stmt_player_upsert, 9, sao->getBreath());
+		sqlite3_vrfy(sqlite3_step(m_stmt_player_upsert), SQLITE_DONE);
+		sqlite3_reset(m_stmt_player_upsert);
 
-	const StringMap &attrs = sao->getMeta().getStrings();
-	for (const auto &attr : attrs) {
-		str_to_sqlite(m_stmt_player_metadata_add, 1, player->getName());
-		str_to_sqlite(m_stmt_player_metadata_add, 2, attr.first);
-		str_to_sqlite(m_stmt_player_metadata_add, 3, attr.second);
-		sqlite3_vrfy(sqlite3_step(m_stmt_player_metadata_add), SQLITE_DONE);
-		sqlite3_reset(m_stmt_player_metadata_add);
-	}
+		int64_to_sqlite(m_stmt_player_id, 1, account_id);
+		int64_to_sqlite(m_stmt_player_id, 2, m_world_id);
+		if (!SQLSTEP(m_stmt_player_id, "Failed to look up player"))
+			throw DatabaseException("Player disappeared while saving");
+		const s64 pid = sqlite_to_int64(m_stmt_player_id, 0);
+		sqlite3_reset(m_stmt_player_id);
 
-	endSave();
+		// Inventory and metadata are written anew
+		int64_to_sqlite(m_stmt_inventory_remove, 1, pid);
+		sqlite3_vrfy(sqlite3_step(m_stmt_inventory_remove), SQLITE_DONE);
+		sqlite3_reset(m_stmt_inventory_remove);
 
+		int64_to_sqlite(m_stmt_metadata_remove, 1, pid);
+		sqlite3_vrfy(sqlite3_step(m_stmt_metadata_remove), SQLITE_DONE);
+		sqlite3_reset(m_stmt_metadata_remove);
+
+		const auto &inventory_lists = player->inventory.getLists();
+		std::ostringstream oss;
+		for (u16 i = 0; i < inventory_lists.size(); i++) {
+			const InventoryList *list = inventory_lists[i];
+
+			int64_to_sqlite(m_stmt_inventory_add, 1, pid);
+			int_to_sqlite(m_stmt_inventory_add, 2, i);
+			int_to_sqlite(m_stmt_inventory_add, 3, list->getWidth());
+			str_to_sqlite(m_stmt_inventory_add, 4, list->getName());
+			int_to_sqlite(m_stmt_inventory_add, 5, list->getSize());
+			sqlite3_vrfy(sqlite3_step(m_stmt_inventory_add), SQLITE_DONE);
+			sqlite3_reset(m_stmt_inventory_add);
+
+			for (u32 j = 0; j < list->getSize(); j++) {
+				const ItemStack &stack = list->getItem(j);
+				if (stack.empty())
+					continue;
+				oss.str("");
+				oss.clear();
+				stack.serialize(oss);
+
+				int64_to_sqlite(m_stmt_inventory_item_add, 1, pid);
+				int_to_sqlite(m_stmt_inventory_item_add, 2, i);
+				int_to_sqlite(m_stmt_inventory_item_add, 3, j);
+				str_to_sqlite(m_stmt_inventory_item_add, 4, oss.str());
+				sqlite3_vrfy(sqlite3_step(m_stmt_inventory_item_add), SQLITE_DONE);
+				sqlite3_reset(m_stmt_inventory_item_add);
+			}
+		}
+
+		const StringMap &attrs = sao->getMeta().getStrings();
+		for (const auto &attr : attrs) {
+			int64_to_sqlite(m_stmt_metadata_add, 1, pid);
+			blob_to_sqlite(m_stmt_metadata_add, 2, attr.first);
+			blob_to_sqlite(m_stmt_metadata_add, 3, attr.second);
+			sqlite3_vrfy(sqlite3_step(m_stmt_metadata_add), SQLITE_DONE);
+			sqlite3_reset(m_stmt_metadata_add);
+		}
+	});
+
+	// Also when it was not saved: there is nothing to keep trying
+	(void)saved;
 	player->onSuccessfulSave();
 }
 
@@ -570,71 +736,74 @@ bool PlayerDatabaseSQLite3::loadPlayer(RemotePlayer *player, PlayerSAO *sao)
 {
 	verifyDatabase();
 
-	str_to_sqlite(m_stmt_player_load, 1, player->getName());
+	const std::string &name = player->getName();
+	provisionAccount(name);
+
+	str_to_sqlite(m_stmt_player_load, 1, name);
+	int64_to_sqlite(m_stmt_player_load, 2, m_world_id);
 	if (!SQLSTEP(m_stmt_player_load, "Failed to load player")) {
 		sqlite3_reset(m_stmt_player_load);
 		return false;
 	}
 
-	sao->setLookPitch(sqlite_to_float(m_stmt_player_load, 0));
-	sao->setPlayerYaw(sqlite_to_float(m_stmt_player_load, 1));
-	sao->setBasePosition(sqlite_to_v3f(m_stmt_player_load, 2));
-	sao->setHPRaw((u16) MYMIN(sqlite_to_int(m_stmt_player_load, 5), U16_MAX));
-	sao->setBreath((u16) MYMIN(sqlite_to_int(m_stmt_player_load, 6), U16_MAX), false);
+	const s64 pid = sqlite_to_int64(m_stmt_player_load, 0);
+	sao->setLookPitch(sqlite_to_float(m_stmt_player_load, 1));
+	sao->setPlayerYaw(sqlite_to_float(m_stmt_player_load, 2));
+	sao->setBasePosition(sqlite_to_v3f(m_stmt_player_load, 3));
+	sao->setHPRaw((u16) MYMIN(sqlite_to_int(m_stmt_player_load, 6), U16_MAX));
+	sao->setBreath((u16) MYMIN(sqlite_to_int(m_stmt_player_load, 7), U16_MAX), false);
 	sqlite3_reset(m_stmt_player_load);
 
 	// Load inventory
-	str_to_sqlite(m_stmt_player_load_inventory, 1, player->getName());
-	while (SQLSTEP(m_stmt_player_load_inventory, "")) {
+	int64_to_sqlite(m_stmt_inventory_load, 1, pid);
+	while (SQLSTEP(m_stmt_inventory_load, "Failed to load inventory")) {
+		const u32 list_index = sqlite_to_uint(m_stmt_inventory_load, 0);
 		InventoryList *invList = player->inventory.addList(
-			sqlite_to_string(m_stmt_player_load_inventory, 2),
-			sqlite_to_uint(m_stmt_player_load_inventory, 3));
-		invList->setWidth(sqlite_to_uint(m_stmt_player_load_inventory, 1));
+			sqlite_to_string(m_stmt_inventory_load, 2),
+			sqlite_to_uint(m_stmt_inventory_load, 3));
+		invList->setWidth(sqlite_to_uint(m_stmt_inventory_load, 1));
 
-		u32 invId = sqlite_to_uint(m_stmt_player_load_inventory, 0);
-
-		str_to_sqlite(m_stmt_player_load_inventory_items, 1, player->getName());
-		int_to_sqlite(m_stmt_player_load_inventory_items, 2, invId);
-		while (SQLSTEP(m_stmt_player_load_inventory_items, "")) {
-			const auto itemStr = sqlite_to_string(m_stmt_player_load_inventory_items, 1);
-			if (!itemStr.empty()) {
-				ItemStack stack;
-				stack.deSerialize(itemStr);
-				invList->changeItem(sqlite_to_uint(m_stmt_player_load_inventory_items, 0), stack);
-			}
+		int64_to_sqlite(m_stmt_inventory_items_load, 1, pid);
+		int_to_sqlite(m_stmt_inventory_items_load, 2, list_index);
+		while (SQLSTEP(m_stmt_inventory_items_load, "Failed to load inventory items")) {
+			ItemStack stack;
+			stack.deSerialize(sqlite_to_string(m_stmt_inventory_items_load, 1));
+			invList->changeItem(sqlite_to_uint(m_stmt_inventory_items_load, 0), stack);
 		}
-		sqlite3_reset(m_stmt_player_load_inventory_items);
+		sqlite3_reset(m_stmt_inventory_items_load);
 	}
+	sqlite3_reset(m_stmt_inventory_load);
 
-	sqlite3_reset(m_stmt_player_load_inventory);
-
-	str_to_sqlite(m_stmt_player_metadata_load, 1, sao->getPlayer()->getName());
-	while (SQLSTEP(m_stmt_player_metadata_load, "")) {
-		std::string attr = sqlite_to_string(m_stmt_player_metadata_load, 0);
-		auto value = sqlite_to_string_view(m_stmt_player_metadata_load, 1);
-
-		sao->getMeta().setString(attr, value);
+	int64_to_sqlite(m_stmt_metadata_load, 1, pid);
+	while (SQLSTEP(m_stmt_metadata_load, "Failed to load player metadata")) {
+		const std::string attr(sqlite_to_blob(m_stmt_metadata_load, 0));
+		sao->getMeta().setString(attr, sqlite_to_blob(m_stmt_metadata_load, 1));
 	}
 	sao->getMeta().setModified(false);
-	sqlite3_reset(m_stmt_player_metadata_load);
+	sqlite3_reset(m_stmt_metadata_load);
 	return true;
 }
 
 bool PlayerDatabaseSQLite3::removePlayer(const std::string &name)
 {
-	if (!playerDataExists(name))
-		return false;
+	verifyDatabase();
 
-	str_to_sqlite(m_stmt_player_remove, 1, name);
-	sqlite3_vrfy(sqlite3_step(m_stmt_player_remove), SQLITE_DONE);
-	sqlite3_reset(m_stmt_player_remove);
-	return true;
+	bool removed = false;
+	transaction([&] {
+		int64_to_sqlite(m_stmt_player_remove, 1, m_world_id);
+		str_to_sqlite(m_stmt_player_remove, 2, name);
+		sqlite3_vrfy(sqlite3_step(m_stmt_player_remove), SQLITE_DONE);
+		removed = sqlite3_changes(m_database) > 0;
+		sqlite3_reset(m_stmt_player_remove);
+	});
+	return removed;
 }
 
 void PlayerDatabaseSQLite3::listPlayers(std::vector<std::string> &res)
 {
 	verifyDatabase();
 
+	int64_to_sqlite(m_stmt_player_list, 1, m_world_id);
 	while (SQLSTEP(m_stmt_player_list, "Failed to list players"))
 		res.emplace_back(sqlite_to_string_view(m_stmt_player_list, 0));
 
@@ -646,7 +815,7 @@ void PlayerDatabaseSQLite3::listPlayers(std::vector<std::string> &res)
  */
 
 AuthDatabaseSQLite3::AuthDatabaseSQLite3(const std::string &savedir) :
-		Database_SQLite3(savedir, "auth"), AuthDatabase()
+		AccountsDatabase_SQLite3(savedir), AuthDatabase()
 {
 }
 
@@ -660,48 +829,41 @@ AuthDatabaseSQLite3::~AuthDatabaseSQLite3()
 	FINALIZE_STATEMENT(read_privs)
 	FINALIZE_STATEMENT(write_privs)
 	FINALIZE_STATEMENT(delete_privs)
-	FINALIZE_STATEMENT(last_insert_rowid)
-}
-
-void AuthDatabaseSQLite3::createDatabase()
-{
-	assert(m_database);
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE IF NOT EXISTS `auth` ("
-			"`id` INTEGER PRIMARY KEY AUTOINCREMENT,"
-			"`name` TEXT UNIQUE NOT NULL,"
-			"`password` TEXT NOT NULL,"
-			"`last_login` INTEGER NOT NULL DEFAULT 0"
-		");",
-		NULL, NULL, NULL),
-		"Failed to create auth table");
-
-	SQLOK(sqlite3_exec(m_database,
-		"CREATE TABLE IF NOT EXISTS `user_privileges` ("
-			"`id` INTEGER,"
-			"`privilege` TEXT,"
-			"PRIMARY KEY (id, privilege)"
-			"CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES auth (id) ON DELETE CASCADE"
-		");",
-		NULL, NULL, NULL),
-		"Failed to create auth privileges table");
+	FINALIZE_STATEMENT(world_register)
+	FINALIZE_STATEMENT(world_delete)
+	FINALIZE_STATEMENT(current_world_get)
+	FINALIZE_STATEMENT(current_world_set)
 }
 
 void AuthDatabaseSQLite3::initStatements()
 {
-	PREPARE_STATEMENT(read, "SELECT id, name, password, last_login FROM auth WHERE name = ?");
-	PREPARE_STATEMENT(write, "UPDATE auth set name = ?, password = ?, last_login = ? WHERE id = ?");
-	PREPARE_STATEMENT(create, "INSERT INTO auth (name, password, last_login) VALUES (?, ?, ?)");
-	PREPARE_STATEMENT(delete, "DELETE FROM auth WHERE name = ?");
+	initAccountStatements();
 
-	PREPARE_STATEMENT(list_names, "SELECT name FROM auth ORDER BY name DESC");
+	// last_login: 0 and below (the Lua side uses -1 for "not yet") is "never"
+	PREPARE_STATEMENT(read, "SELECT `id`, `name`, `password`, `last_login` "
+		"FROM `accounts` WHERE `name` = ?");
+	PREPARE_STATEMENT(write, "UPDATE `accounts` SET `name` = ?, `password` = ?, "
+		"`last_login` = NULLIF(MAX(?, 0), 0) WHERE `id` = ?");
+	PREPARE_STATEMENT(create, "INSERT INTO `accounts` (`name`, `password`, `last_login`) "
+		"VALUES (?, ?, NULLIF(MAX(?, 0), 0))");
+	// Privileges and the state in the worlds go with it (ON DELETE CASCADE)
+	PREPARE_STATEMENT(delete, "DELETE FROM `accounts` WHERE `name` = ?");
 
-	PREPARE_STATEMENT(read_privs, "SELECT privilege FROM user_privileges WHERE id = ?");
-	PREPARE_STATEMENT(write_privs, "INSERT OR IGNORE INTO user_privileges (id, privilege) VALUES (?, ?)");
-	PREPARE_STATEMENT(delete_privs, "DELETE FROM user_privileges WHERE id = ?");
+	PREPARE_STATEMENT(list_names, "SELECT `name` FROM `accounts` ORDER BY `name` DESC");
 
-	PREPARE_STATEMENT(last_insert_rowid, "SELECT last_insert_rowid()");
+	PREPARE_STATEMENT(read_privs, "SELECT `privilege` FROM `privileges` WHERE `account_id` = ?");
+	PREPARE_STATEMENT(write_privs, "INSERT OR IGNORE INTO `privileges` "
+		"(`account_id`, `privilege`) VALUES (?, ?)");
+	PREPARE_STATEMENT(delete_privs, "DELETE FROM `privileges` WHERE `account_id` = ?");
+
+	PREPARE_STATEMENT(world_register, "INSERT INTO `worlds` (`id`, `name`) VALUES (?, ?) "
+		"ON CONFLICT (`id`) DO UPDATE SET `name` = excluded.`name`");
+	PREPARE_STATEMENT(world_delete, "DELETE FROM `worlds` WHERE `id` = ?");
+	PREPARE_STATEMENT(current_world_get,
+		"SELECT `current_world_id` FROM `accounts` WHERE `name` = ?");
+	// IS NOT: also true when it is NULL. No write if nothing changes.
+	PREPARE_STATEMENT(current_world_set, "UPDATE `accounts` SET `current_world_id` = ? "
+		"WHERE `name` = ? AND `current_world_id` IS NOT ?");
 }
 
 bool AuthDatabaseSQLite3::getAuth(const std::string &name, AuthEntry &res)
@@ -713,12 +875,13 @@ bool AuthDatabaseSQLite3::getAuth(const std::string &name, AuthEntry &res)
 		return false;
 	}
 
-	res.id = sqlite_to_uint(m_stmt_read, 0);
+	res.id = sqlite_to_uint64(m_stmt_read, 0);
 	res.name = sqlite_to_string_view(m_stmt_read, 1);
 	res.password = sqlite_to_string_view(m_stmt_read, 2);
-	res.last_login = sqlite_to_int64(m_stmt_read, 3);
+	res.last_login = sqlite_to_int64(m_stmt_read, 3); // NULL is 0
 	sqlite3_reset(m_stmt_read);
 
+	res.privileges.clear();
 	int64_to_sqlite(m_stmt_read_privs, 1, res.id);
 	while (SQLSTEP(m_stmt_read_privs, "")) {
 		res.privileges.emplace_back(sqlite_to_string_view(m_stmt_read_privs, 0));
@@ -730,40 +893,34 @@ bool AuthDatabaseSQLite3::getAuth(const std::string &name, AuthEntry &res)
 
 bool AuthDatabaseSQLite3::saveAuth(const AuthEntry &authEntry)
 {
-	beginSave();
+	transaction([&] {
+		str_to_sqlite(m_stmt_write, 1, authEntry.name);
+		str_to_sqlite(m_stmt_write, 2, authEntry.password);
+		int64_to_sqlite(m_stmt_write, 3, authEntry.last_login);
+		int64_to_sqlite(m_stmt_write, 4, authEntry.id);
+		sqlite3_vrfy(sqlite3_step(m_stmt_write), SQLITE_DONE);
+		sqlite3_reset(m_stmt_write);
 
-	str_to_sqlite(m_stmt_write, 1, authEntry.name);
-	str_to_sqlite(m_stmt_write, 2, authEntry.password);
-	int64_to_sqlite(m_stmt_write, 3, authEntry.last_login);
-	int64_to_sqlite(m_stmt_write, 4, authEntry.id);
-	sqlite3_vrfy(sqlite3_step(m_stmt_write), SQLITE_DONE);
-	sqlite3_reset(m_stmt_write);
-
-	writePrivileges(authEntry);
-
-	endSave();
+		writePrivileges(authEntry);
+	});
 	return true;
 }
 
 bool AuthDatabaseSQLite3::createAuth(AuthEntry &authEntry)
 {
-	beginSave();
+	transaction([&] {
+		// id autoincrements
+		str_to_sqlite(m_stmt_create, 1, authEntry.name);
+		str_to_sqlite(m_stmt_create, 2, authEntry.password);
+		int64_to_sqlite(m_stmt_create, 3, authEntry.last_login);
+		sqlite3_vrfy(sqlite3_step(m_stmt_create), SQLITE_DONE);
+		sqlite3_reset(m_stmt_create);
 
-	// id autoincrements
-	str_to_sqlite(m_stmt_create, 1, authEntry.name);
-	str_to_sqlite(m_stmt_create, 2, authEntry.password);
-	int64_to_sqlite(m_stmt_create, 3, authEntry.last_login);
-	sqlite3_vrfy(sqlite3_step(m_stmt_create), SQLITE_DONE);
-	sqlite3_reset(m_stmt_create);
+		// obtain id and write back to original authEntry
+		authEntry.id = (u64) sqlite3_last_insert_rowid(m_database);
 
-	// obtain id and write back to original authEntry
-	sqlite3_step(m_stmt_last_insert_rowid);
-	authEntry.id = sqlite_to_uint(m_stmt_last_insert_rowid, 0);
-	sqlite3_reset(m_stmt_last_insert_rowid);
-
-	writePrivileges(authEntry);
-
-	endSave();
+		writePrivileges(authEntry);
+	});
 	return true;
 }
 
@@ -771,12 +928,13 @@ bool AuthDatabaseSQLite3::deleteAuth(const std::string &name)
 {
 	verifyDatabase();
 
-	str_to_sqlite(m_stmt_delete, 1, name);
-	sqlite3_vrfy(sqlite3_step(m_stmt_delete), SQLITE_DONE);
-	int changes = sqlite3_changes(m_database);
-	sqlite3_reset(m_stmt_delete);
-
-	// privileges deleted by foreign key on delete cascade
+	int changes = 0;
+	transaction([&] {
+		str_to_sqlite(m_stmt_delete, 1, name);
+		sqlite3_vrfy(sqlite3_step(m_stmt_delete), SQLITE_DONE);
+		changes = sqlite3_changes(m_database);
+		sqlite3_reset(m_stmt_delete);
+	});
 
 	return changes > 0;
 }
@@ -802,11 +960,58 @@ void AuthDatabaseSQLite3::writePrivileges(const AuthEntry &authEntry)
 	sqlite3_vrfy(sqlite3_step(m_stmt_delete_privs), SQLITE_DONE);
 	sqlite3_reset(m_stmt_delete_privs);
 	for (const std::string &privilege : authEntry.privileges) {
+		if (privilege.empty())
+			continue; // not a privilege
 		int64_to_sqlite(m_stmt_write_privs, 1, authEntry.id);
 		str_to_sqlite(m_stmt_write_privs, 2, privilege);
 		sqlite3_vrfy(sqlite3_step(m_stmt_write_privs), SQLITE_DONE);
 		sqlite3_reset(m_stmt_write_privs);
 	}
+}
+
+void AuthDatabaseSQLite3::registerWorld(u32 world_id, const std::string &name)
+{
+	transaction([&] {
+		int64_to_sqlite(m_stmt_world_register, 1, world_id);
+		str_to_sqlite(m_stmt_world_register, 2, name);
+		sqlite3_vrfy(sqlite3_step(m_stmt_world_register), SQLITE_DONE);
+		sqlite3_reset(m_stmt_world_register);
+	});
+}
+
+void AuthDatabaseSQLite3::deleteWorld(u32 world_id)
+{
+	transaction([&] {
+		int64_to_sqlite(m_stmt_world_delete, 1, world_id);
+		sqlite3_vrfy(sqlite3_step(m_stmt_world_delete), SQLITE_DONE);
+		sqlite3_reset(m_stmt_world_delete);
+	});
+}
+
+bool AuthDatabaseSQLite3::getCurrentWorld(const std::string &name, u32 *world_id)
+{
+	verifyDatabase();
+
+	str_to_sqlite(m_stmt_current_world_get, 1, name);
+	bool found = false;
+	if (SQLSTEP(m_stmt_current_world_get, "Failed to get the world of a player") &&
+			sqlite3_column_type(m_stmt_current_world_get, 0) != SQLITE_NULL) {
+		*world_id = sqlite_to_uint(m_stmt_current_world_get, 0);
+		found = true;
+	}
+	sqlite3_reset(m_stmt_current_world_get);
+	return found;
+}
+
+void AuthDatabaseSQLite3::setCurrentWorld(const std::string &name, u32 world_id)
+{
+	transaction([&] {
+		int64_to_sqlite(m_stmt_current_world_set, 1, world_id);
+		str_to_sqlite(m_stmt_current_world_set, 2, name);
+		int64_to_sqlite(m_stmt_current_world_set, 3, world_id);
+		sqlite3_vrfy(sqlite3_step(m_stmt_current_world_set), SQLITE_DONE);
+		sqlite3_reset(m_stmt_current_world_set);
+	});
 }
 
 ModStorageDatabaseSQLite3::ModStorageDatabaseSQLite3(const std::string &savedir):

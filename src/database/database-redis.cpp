@@ -19,8 +19,7 @@
 
 /*
  * Redis is not a good fit for Voxelyx and only still supported for legacy as
- * well as advanced use case reasons, see:
- * <https://github.com/luanti-org/luanti/issues/14822>
+ * well as advanced use case reasons.
  *
  * Do NOT extend this backend with any new functionality.
  */

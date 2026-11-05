@@ -136,6 +136,16 @@ void Database_PostgreSQL::createTableIfNotExists(const std::string &table_name,
 	PQclear(result);
 }
 
+void Database_PostgreSQL::execSimple(const char *sql)
+{
+	checkResults(PQexec(m_conn, sql));
+}
+
+PGresult *Database_PostgreSQL::execQuery(const char *sql)
+{
+	return checkResults(PQexec(m_conn, sql), false);
+}
+
 void Database_PostgreSQL::beginSave()
 {
 	verifyDatabase();
@@ -299,229 +309,292 @@ void MapDatabasePostgreSQL::listAllLoadableBlocks(std::vector<v3s16> &dst)
 }
 
 /*
+ * Accounts database
+ */
+
+namespace {
+
+// See the SQLite version of this schema for the reasons behind it. Times are
+// seconds since the Unix epoch.
+const char *const ACCOUNTS_SCHEMA = R"SQL(
+CREATE TABLE worlds (
+	id   BIGINT PRIMARY KEY,
+	name TEXT NOT NULL
+);
+
+CREATE TABLE accounts (
+	id               BIGSERIAL PRIMARY KEY,
+	name             TEXT   NOT NULL UNIQUE CHECK (name <> ''),
+	password         TEXT   NOT NULL,
+	created_at       BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::BIGINT),
+	last_login       BIGINT CHECK (last_login IS NULL OR last_login > 0),
+	current_world_id BIGINT REFERENCES worlds (id) ON DELETE SET NULL
+);
+CREATE INDEX accounts_current_world_id ON accounts (current_world_id);
+
+CREATE TABLE privileges (
+	account_id BIGINT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+	privilege  TEXT   NOT NULL CHECK (privilege <> ''),
+	PRIMARY KEY (account_id, privilege)
+);
+
+CREATE TABLE world_players (
+	id         BIGSERIAL PRIMARY KEY,
+	account_id BIGINT  NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+	world_id   BIGINT  NOT NULL REFERENCES worlds (id)   ON DELETE CASCADE,
+	pitch      DOUBLE PRECISION NOT NULL,
+	yaw        DOUBLE PRECISION NOT NULL,
+	pos_x      DOUBLE PRECISION NOT NULL,
+	pos_y      DOUBLE PRECISION NOT NULL,
+	pos_z      DOUBLE PRECISION NOT NULL,
+	hp         INTEGER NOT NULL CHECK (hp     BETWEEN 0 AND 65535),
+	breath     INTEGER NOT NULL CHECK (breath BETWEEN 0 AND 65535),
+	created_at BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::BIGINT),
+	updated_at BIGINT  NOT NULL DEFAULT (EXTRACT(EPOCH FROM now())::BIGINT),
+	UNIQUE (account_id, world_id)
+);
+CREATE INDEX world_players_world_id ON world_players (world_id);
+
+CREATE TABLE world_player_metadata (
+	world_player_id BIGINT NOT NULL REFERENCES world_players (id) ON DELETE CASCADE,
+	key             BYTEA  NOT NULL,
+	value           BYTEA  NOT NULL,
+	PRIMARY KEY (world_player_id, key)
+);
+
+CREATE TABLE world_player_inventories (
+	world_player_id BIGINT  NOT NULL REFERENCES world_players (id) ON DELETE CASCADE,
+	list_index      INTEGER NOT NULL CHECK (list_index >= 0),
+	name            TEXT    NOT NULL,
+	width           INTEGER NOT NULL CHECK (width >= 0),
+	size            INTEGER NOT NULL CHECK (size  >= 0),
+	PRIMARY KEY (world_player_id, list_index),
+	UNIQUE (world_player_id, name)
+);
+
+CREATE TABLE world_player_inventory_items (
+	world_player_id BIGINT  NOT NULL,
+	list_index      INTEGER NOT NULL,
+	slot            INTEGER NOT NULL CHECK (slot >= 0),
+	item            TEXT    NOT NULL CHECK (item <> ''),
+	PRIMARY KEY (world_player_id, list_index, slot),
+	FOREIGN KEY (world_player_id, list_index)
+		REFERENCES world_player_inventories (world_player_id, list_index)
+		ON DELETE CASCADE
+);
+)SQL";
+
+// A float so that it reads back as the same float
+std::string float_to_pg(double v)
+{
+	char buf[40];
+	snprintf(buf, sizeof(buf), "%.9g", v);
+	return buf;
+}
+
+} // namespace
+
+AccountsDatabase_PostgreSQL::AccountsDatabase_PostgreSQL(const std::string &connect_string) :
+	Database_PostgreSQL(connect_string, "_auth")
+{
+}
+
+void AccountsDatabase_PostgreSQL::createDatabase()
+{
+	// Several connections can do this at the same time: the lock is released
+	// when the transaction ends, and whoever comes second finds it done.
+	beginSave();
+	try {
+		execSimple("SELECT pg_advisory_xact_lock(7160181)");
+		execSimple("CREATE TABLE IF NOT EXISTS schema_version "
+			"(version INTEGER NOT NULL)");
+		PGresult *res = execQuery("SELECT version FROM schema_version");
+		const int rows = PQntuples(res);
+		const int version = rows ? atoi(PQgetvalue(res, 0, 0)) : 0;
+		PQclear(res);
+		if (version > SCHEMA_VERSION) {
+			throw DatabaseException("The accounts database has schema version " +
+				itos(version) + ", this version only knows up to " +
+				itos(SCHEMA_VERSION) + ". It was made by a newer version.");
+		}
+		if (rows == 0) {
+			execSimple(ACCOUNTS_SCHEMA);
+			execSimple(("INSERT INTO schema_version (version) VALUES (" +
+				itos(SCHEMA_VERSION) + ")").c_str());
+		}
+	} catch (...) {
+		try {
+			rollback();
+		} catch (const DatabaseException &) {
+		}
+		throw;
+	}
+	endSave();
+}
+
+void AccountsDatabase_PostgreSQL::initAccountStatements()
+{
+	prepareStatement("account_id", "SELECT id FROM accounts WHERE name = $1");
+}
+
+u64 AccountsDatabase_PostgreSQL::getAccountId(const std::string &name)
+{
+	const char *values[] = { name.c_str() };
+	PGresult *res = execPrepared("account_id", 1, values, false, false);
+	u64 id = 0;
+	if (PQntuples(res))
+		id = strtoull(PQgetvalue(res, 0, 0), nullptr, 10);
+	PQclear(res);
+	return id;
+}
+
+/*
  * Player Database
  */
-PlayerDatabasePostgreSQL::PlayerDatabasePostgreSQL(const std::string &connect_string):
-	Database_PostgreSQL(connect_string, "_player"),
-	PlayerDatabase()
+
+PlayerDatabasePostgreSQL::PlayerDatabasePostgreSQL(const std::string &connect_string,
+		u32 world_id):
+	AccountsDatabase_PostgreSQL(connect_string),
+	PlayerDatabase(),
+	m_world_id(world_id)
 {
 	connectToDatabase();
 }
 
-
-void PlayerDatabasePostgreSQL::createDatabase()
-{
-	createTableIfNotExists("player",
-		"CREATE TABLE player ("
-			"name VARCHAR(60) NOT NULL,"
-			"pitch NUMERIC(15, 7) NOT NULL,"
-			"yaw NUMERIC(15, 7) NOT NULL,"
-			"posX NUMERIC(15, 7) NOT NULL,"
-			"posY NUMERIC(15, 7) NOT NULL,"
-			"posZ NUMERIC(15, 7) NOT NULL,"
-			"hp INT NOT NULL,"
-			"breath INT NOT NULL,"
-			"creation_date TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),"
-			"modification_date TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),"
-			"PRIMARY KEY (name)"
-			");"
-	);
-
-	createTableIfNotExists("player_inventories",
-		"CREATE TABLE player_inventories ("
-			"player VARCHAR(60) NOT NULL,"
-			"inv_id INT NOT NULL,"
-			"inv_width INT NOT NULL,"
-			"inv_name TEXT NOT NULL DEFAULT '',"
-			"inv_size INT NOT NULL,"
-			"PRIMARY KEY(player, inv_id),"
-			"CONSTRAINT player_inventories_fkey FOREIGN KEY (player) REFERENCES "
-			"player (name) ON DELETE CASCADE"
-			");"
-	);
-
-	createTableIfNotExists("player_inventory_items",
-		"CREATE TABLE player_inventory_items ("
-			"player VARCHAR(60) NOT NULL,"
-			"inv_id INT NOT NULL,"
-			"slot_id INT NOT NULL,"
-			"item TEXT NOT NULL DEFAULT '',"
-			"PRIMARY KEY(player, inv_id, slot_id),"
-			"CONSTRAINT player_inventory_items_fkey FOREIGN KEY (player) REFERENCES "
-			"player (name) ON DELETE CASCADE"
-			");"
-	);
-
-	createTableIfNotExists("player_metadata",
-		"CREATE TABLE player_metadata ("
-			"player VARCHAR(60) NOT NULL,"
-			"attr VARCHAR(256) NOT NULL,"
-			"value TEXT,"
-			"PRIMARY KEY(player, attr),"
-			"CONSTRAINT player_metadata_fkey FOREIGN KEY (player) REFERENCES "
-			"player (name) ON DELETE CASCADE"
-			");"
-	);
-
-	infostream << "PostgreSQL: Player Database was inited." << std::endl;
-}
-
 void PlayerDatabasePostgreSQL::initStatements()
 {
-	if (getPGVersion() < 90500) {
-		prepareStatement("create_player",
-			"INSERT INTO player(name, pitch, yaw, posX, posY, posZ, hp, breath) VALUES "
-				"($1, $2, $3, $4, $5, $6, $7::int, $8::int)");
+	initAccountStatements();
 
-		prepareStatement("update_player",
-			"UPDATE SET pitch = $2, yaw = $3, posX = $4, posY = $5, posZ = $6, hp = $7::int, "
-				"breath = $8::int, modification_date = NOW() WHERE name = $1");
-	} else {
-		prepareStatement("save_player",
-			"INSERT INTO player(name, pitch, yaw, posX, posY, posZ, hp, breath) VALUES "
-				"($1, $2, $3, $4, $5, $6, $7::int, $8::int)"
-				"ON CONFLICT ON CONSTRAINT player_pkey DO UPDATE SET pitch = $2, yaw = $3, "
-				"posX = $4, posY = $5, posZ = $6, hp = $7::int, breath = $8::int, "
-				"modification_date = NOW()");
-	}
+	prepareStatement("account_add_locked", "INSERT INTO accounts (name, password) "
+		"VALUES ($1, $2) ON CONFLICT (name) DO NOTHING");
 
-	prepareStatement("remove_player", "DELETE FROM player WHERE name = $1");
+	prepareStatement("player_load",
+		"SELECT wp.id, wp.pitch, wp.yaw, wp.pos_x, wp.pos_y, wp.pos_z, wp.hp, wp.breath "
+		"FROM world_players wp JOIN accounts a ON a.id = wp.account_id "
+		"WHERE a.name = $1 AND wp.world_id = $2::bigint");
+	prepareStatement("player_upsert",
+		"INSERT INTO world_players (account_id, world_id, pitch, yaw, pos_x, pos_y, "
+		"pos_z, hp, breath) VALUES ($1::bigint, $2::bigint, $3::double precision, "
+		"$4::double precision, $5::double precision, $6::double precision, "
+		"$7::double precision, $8::integer, $9::integer) "
+		"ON CONFLICT (account_id, world_id) DO UPDATE SET "
+		"pitch = EXCLUDED.pitch, yaw = EXCLUDED.yaw, pos_x = EXCLUDED.pos_x, "
+		"pos_y = EXCLUDED.pos_y, pos_z = EXCLUDED.pos_z, hp = EXCLUDED.hp, "
+		"breath = EXCLUDED.breath, updated_at = EXTRACT(EPOCH FROM now())::BIGINT "
+		"RETURNING id");
+	prepareStatement("player_remove",
+		"DELETE FROM world_players WHERE world_id = $1::bigint AND account_id = "
+		"(SELECT id FROM accounts WHERE name = $2)");
+	prepareStatement("player_list",
+		"SELECT a.name FROM world_players wp JOIN accounts a ON a.id = wp.account_id "
+		"WHERE wp.world_id = $1::bigint ORDER BY a.name");
 
-	prepareStatement("load_player_list", "SELECT name FROM player");
+	prepareStatement("inventory_load",
+		"SELECT list_index, width, name, size FROM world_player_inventories "
+		"WHERE world_player_id = $1::bigint ORDER BY list_index");
+	prepareStatement("inventory_items_load",
+		"SELECT slot, item FROM world_player_inventory_items "
+		"WHERE world_player_id = $1::bigint AND list_index = $2::integer");
+	prepareStatement("inventory_add",
+		"INSERT INTO world_player_inventories (world_player_id, list_index, width, "
+		"name, size) VALUES ($1::bigint, $2::integer, $3::integer, $4, $5::integer)");
+	prepareStatement("inventory_item_add",
+		"INSERT INTO world_player_inventory_items (world_player_id, list_index, "
+		"slot, item) VALUES ($1::bigint, $2::integer, $3::integer, $4)");
+	prepareStatement("inventory_remove",
+		"DELETE FROM world_player_inventories WHERE world_player_id = $1::bigint");
 
-	prepareStatement("remove_player_inventories",
-		"DELETE FROM player_inventories WHERE player = $1");
-
-	prepareStatement("remove_player_inventory_items",
-		"DELETE FROM player_inventory_items WHERE player = $1");
-
-	prepareStatement("add_player_inventory",
-		"INSERT INTO player_inventories (player, inv_id, inv_width, inv_name, inv_size) VALUES "
-			"($1, $2::int, $3::int, $4, $5::int)");
-
-	prepareStatement("add_player_inventory_item",
-		"INSERT INTO player_inventory_items (player, inv_id, slot_id, item) VALUES "
-			"($1, $2::int, $3::int, $4)");
-
-	prepareStatement("load_player_inventories",
-		"SELECT inv_id, inv_width, inv_name, inv_size FROM player_inventories "
-			"WHERE player = $1 ORDER BY inv_id");
-
-	prepareStatement("load_player_inventory_items",
-		"SELECT slot_id, item FROM player_inventory_items WHERE "
-			"player = $1 AND inv_id = $2::int");
-
-	prepareStatement("load_player",
-		"SELECT pitch, yaw, posX, posY, posZ, hp, breath FROM player WHERE name = $1");
-
-	prepareStatement("remove_player_metadata",
-		"DELETE FROM player_metadata WHERE player = $1");
-
-	prepareStatement("save_player_metadata",
-		"INSERT INTO player_metadata (player, attr, value) VALUES ($1, $2, $3)");
-
-	prepareStatement("load_player_metadata",
-		"SELECT attr, value FROM player_metadata WHERE player = $1");
-
+	prepareStatement("metadata_load",
+		"SELECT key, value FROM world_player_metadata WHERE world_player_id = $1::bigint");
+	prepareStatement("metadata_add",
+		"INSERT INTO world_player_metadata (world_player_id, key, value) "
+		"VALUES ($1::bigint, $2, $3)");
+	prepareStatement("metadata_remove",
+		"DELETE FROM world_player_metadata WHERE world_player_id = $1::bigint");
 }
 
-bool PlayerDatabasePostgreSQL::playerDataExists(const std::string &playername)
+void PlayerDatabasePostgreSQL::provisionAccount(const std::string &name)
 {
-	verifyDatabase();
-
-	const char *values[] = { playername.c_str() };
-	PGresult *results = execPrepared("load_player", 1, values, false);
-
-	bool res = (PQntuples(results) > 0);
-	PQclear(results);
-	return res;
+	if (getAccountId(name) != 0)
+		return;
+	transaction([&] {
+		const char *values[] = { name.c_str(), ACCOUNT_LOCKED_PASSWORD };
+		execPrepared("account_add_locked", 2, values);
+	});
+	infostream << "PlayerDatabasePostgreSQL: added a locked account for \"" << name
+		<< "\", which has none" << std::endl;
 }
 
 void PlayerDatabasePostgreSQL::savePlayer(RemotePlayer *player)
 {
-	PlayerSAO* sao = player->getPlayerSAO();
-	if (!sao)
-		return;
+	PlayerSAO *sao = player->getPlayerSAO();
+	sanity_check(sao);
 
 	verifyDatabase();
 
-	v3f pos = sao->getBasePosition();
-	std::string pitch = ftos(sao->getLookPitch());
-	std::string yaw = ftos(sao->getRotation().Y);
-	std::string posx = ftos(pos.X);
-	std::string posy = ftos(pos.Y);
-	std::string posz = ftos(pos.Z);
-	std::string hp = itos(sao->getHP());
-	std::string breath = itos(sao->getBreath());
-	const char *values[] = {
-		player->getName().c_str(),
-		pitch.c_str(),
-		yaw.c_str(),
-		posx.c_str(), posy.c_str(), posz.c_str(),
-		hp.c_str(),
-		breath.c_str()
-	};
+	const std::string &name = player->getName();
+	const v3f pos = sao->getBasePosition();
+	const std::string world = itos(m_world_id);
 
-	const char* rmvalues[] = { player->getName().c_str() };
-	beginSave();
-
-	if (getPGVersion() < 90500) {
-		if (!playerDataExists(player->getName()))
-			execPrepared("create_player", 8, values, true, false);
-		else
-			execPrepared("update_player", 8, values, true, false);
-	}
-	else
-		execPrepared("save_player", 8, values, true, false);
-
-	// Write player inventories
-	execPrepared("remove_player_inventories", 1, rmvalues);
-	execPrepared("remove_player_inventory_items", 1, rmvalues);
-
-	const auto &inventory_lists = sao->getInventory()->getLists();
-	std::ostringstream oss;
-	for (u16 i = 0; i < inventory_lists.size(); i++) {
-		const InventoryList* list = inventory_lists[i];
-		const std::string &name = list->getName();
-		std::string width = itos(list->getWidth()),
-			inv_id = itos(i), lsize = itos(list->getSize());
-
-		const char* inv_values[] = {
-			player->getName().c_str(),
-			inv_id.c_str(),
-			width.c_str(),
-			name.c_str(),
-			lsize.c_str()
-		};
-		execPrepared("add_player_inventory", 5, inv_values);
-
-		for (u32 j = 0; j < list->getSize(); j++) {
-			oss.str("");
-			oss.clear();
-			list->getItem(j).serialize(oss);
-			std::string itemStr = oss.str(), slotId = itos(j);
-
-			const char* invitem_values[] = {
-				player->getName().c_str(),
-				inv_id.c_str(),
-				slotId.c_str(),
-				itemStr.c_str()
-			};
-			execPrepared("add_player_inventory_item", 4, invitem_values);
+	transaction([&] {
+		const u64 account_id = getAccountId(name);
+		if (account_id == 0) {
+			// The account was deleted while the player was online. Don't bring it back.
+			warningstream << "PlayerDatabasePostgreSQL: \"" << name << "\" has no "
+				"account, not saving their state" << std::endl;
+			return;
 		}
-	}
 
-	execPrepared("remove_player_metadata", 1, rmvalues);
-	const StringMap &attrs = sao->getMeta().getStrings();
-	for (const auto &attr : attrs) {
-		const char *meta_values[] = {
-			player->getName().c_str(),
-			attr.first.c_str(),
-			attr.second.c_str()
-		};
-		execPrepared("save_player_metadata", 3, meta_values);
-	}
-	endSave();
+		const std::string account = std::to_string(account_id);
+		const std::string pitch = float_to_pg(sao->getLookPitch());
+		const std::string yaw = float_to_pg(sao->getRotation().Y);
+		const std::string px = float_to_pg(pos.X), py = float_to_pg(pos.Y),
+			pz = float_to_pg(pos.Z);
+		const std::string hp = itos(sao->getHP()), breath = itos(sao->getBreath());
+		const char *values[] = { account.c_str(), world.c_str(), pitch.c_str(),
+			yaw.c_str(), px.c_str(), py.c_str(), pz.c_str(), hp.c_str(), breath.c_str() };
+		PGresult *res = execPrepared("player_upsert", 9, values, false, false);
+		const std::string pid = pg_to_string(res, 0, 0);
+		PQclear(res);
+
+		// Inventory and metadata are written anew
+		const char *pid_value[] = { pid.c_str() };
+		execPrepared("inventory_remove", 1, pid_value);
+		execPrepared("metadata_remove", 1, pid_value);
+
+		const auto &inventory_lists = player->inventory.getLists();
+		std::ostringstream oss;
+		for (u16 i = 0; i < inventory_lists.size(); i++) {
+			const InventoryList *list = inventory_lists[i];
+			const std::string index = itos(i), width = itos(list->getWidth()),
+				size = itos(list->getSize());
+			const char *inv_values[] = { pid.c_str(), index.c_str(), width.c_str(),
+				list->getName().c_str(), size.c_str() };
+			execPrepared("inventory_add", 5, inv_values);
+
+			for (u32 j = 0; j < list->getSize(); j++) {
+				const ItemStack &stack = list->getItem(j);
+				if (stack.empty())
+					continue;
+				oss.str("");
+				oss.clear();
+				stack.serialize(oss);
+				const std::string slot = itos(j), item = oss.str();
+				const char *item_values[] = { pid.c_str(), index.c_str(), slot.c_str(),
+					item.c_str() };
+				execPrepared("inventory_item_add", 4, item_values);
+			}
+		}
+
+		for (const auto &attr : sao->getMeta().getStrings()) {
+			// Arbitrary bytes: sent as they are
+			const void *args[] = { pid.c_str(), attr.first.data(), attr.second.data() };
+			const int argLen[] = { -1, (int)MYMIN(attr.first.size(), INT_MAX),
+				(int)MYMIN(attr.second.size(), INT_MAX) };
+			const int argFmt[] = { 0, 1, 1 };
+			execPrepared("metadata_add", ARRLEN(args), args, argLen, argFmt);
+		}
+	});
 
 	player->onSuccessfulSave();
 }
@@ -531,139 +604,116 @@ bool PlayerDatabasePostgreSQL::loadPlayer(RemotePlayer *player, PlayerSAO *sao)
 	sanity_check(sao);
 	verifyDatabase();
 
-	const char *values[] = { player->getName().c_str() };
-	PGresult *results = execPrepared("load_player", 1, values, false, false);
+	const std::string &name = player->getName();
+	provisionAccount(name);
 
-	// Player not found, return not found
+	const std::string world = itos(m_world_id);
+	const char *values[] = { name.c_str(), world.c_str() };
+	PGresult *results = execPrepared("player_load", 2, values, false, false);
 	if (!PQntuples(results)) {
 		PQclear(results);
 		return false;
 	}
 
-	sao->setLookPitch(pg_to_float(results, 0, 0));
-	sao->setRotation(v3f(0, pg_to_float(results, 0, 1), 0));
-	sao->setBasePosition(v3f(
-		pg_to_float(results, 0, 2),
-		pg_to_float(results, 0, 3),
-		pg_to_float(results, 0, 4))
-	);
-	sao->setHPRaw((u16) pg_to_int(results, 0, 5));
-	sao->setBreath((u16) pg_to_int(results, 0, 6), false);
-
+	const std::string pid = pg_to_string(results, 0, 0);
+	sao->setLookPitch(pg_to_float(results, 0, 1));
+	sao->setPlayerYaw(pg_to_float(results, 0, 2));
+	sao->setBasePosition(v3f(pg_to_float(results, 0, 3), pg_to_float(results, 0, 4),
+		pg_to_float(results, 0, 5)));
+	sao->setHPRaw((u16) MYMIN(pg_to_int(results, 0, 6), U16_MAX));
+	sao->setBreath((u16) MYMIN(pg_to_int(results, 0, 7), U16_MAX), false);
 	PQclear(results);
 
-	// Load inventory
-	results = execPrepared("load_player_inventories", 1, values, false, false);
-
-	int resultCount = PQntuples(results);
-
-	for (int row = 0; row < resultCount; ++row) {
-		InventoryList* invList = player->inventory.
-			addList(PQgetvalue(results, row, 2), pg_to_uint(results, row, 3));
+	const char *pid_value[] = { pid.c_str() };
+	results = execPrepared("inventory_load", 1, pid_value, false, false);
+	for (int row = 0; row < PQntuples(results); ++row) {
+		const std::string index = pg_to_string(results, row, 0);
+		InventoryList *invList = player->inventory.addList(
+			pg_to_string(results, row, 2), pg_to_uint(results, row, 3));
 		invList->setWidth(pg_to_uint(results, row, 1));
 
-		u32 invId = pg_to_uint(results, row, 0);
-		std::string invIdStr = itos(invId);
-
-		const char* values2[] = {
-			player->getName().c_str(),
-			invIdStr.c_str()
-		};
-		PGresult *results2 = execPrepared("load_player_inventory_items", 2,
-			values2, false, false);
-
-		int resultCount2 = PQntuples(results2);
-		for (int row2 = 0; row2 < resultCount2; row2++) {
-			const std::string itemStr = PQgetvalue(results2, row2, 1);
-			if (itemStr.length() > 0) {
-				ItemStack stack;
-				stack.deSerialize(itemStr);
-				invList->changeItem(pg_to_uint(results2, row2, 0), stack);
-			}
+		const char *item_values[] = { pid.c_str(), index.c_str() };
+		PGresult *items = execPrepared("inventory_items_load", 2, item_values, false, false);
+		for (int r = 0; r < PQntuples(items); r++) {
+			ItemStack stack;
+			stack.deSerialize(pg_to_string(items, r, 1));
+			invList->changeItem(pg_to_uint(items, r, 0), stack);
 		}
-		PQclear(results2);
+		PQclear(items);
 	}
-
 	PQclear(results);
 
-	results = execPrepared("load_player_metadata", 1, values, false);
-
-	int numrows = PQntuples(results);
-	for (int row = 0; row < numrows; row++) {
-		sao->getMeta().setString(PQgetvalue(results, row, 0), PQgetvalue(results, row, 1));
-	}
+	// Binary results: the keys and values are bytes
+	results = execPrepared("metadata_load", 1, pid_value, false, true);
+	for (int row = 0; row < PQntuples(results); row++)
+		sao->getMeta().setString(pg_to_string(results, row, 0), pg_to_string(results, row, 1));
 	sao->getMeta().setModified(false);
-
 	PQclear(results);
-
 	return true;
 }
 
 bool PlayerDatabasePostgreSQL::removePlayer(const std::string &name)
 {
-	if (!playerDataExists(name))
-		return false;
-
 	verifyDatabase();
 
-	const char *values[] = { name.c_str() };
-	execPrepared("remove_player", 1, values);
-
-	return true;
+	const std::string world = itos(m_world_id);
+	const char *values[] = { world.c_str(), name.c_str() };
+	PGresult *res = execPrepared("player_remove", 2, values, false, false);
+	const bool removed = atoi(PQcmdTuples(res)) > 0;
+	PQclear(res);
+	return removed;
 }
 
 void PlayerDatabasePostgreSQL::listPlayers(std::vector<std::string> &res)
 {
 	verifyDatabase();
 
-	PGresult *results = execPrepared("load_player_list", 0, NULL, false);
-
-	int numrows = PQntuples(results);
-	for (int row = 0; row < numrows; row++)
+	const std::string world = itos(m_world_id);
+	const char *values[] = { world.c_str() };
+	PGresult *results = execPrepared("player_list", 1, values, false, false);
+	for (int row = 0; row < PQntuples(results); row++)
 		res.emplace_back(PQgetvalue(results, row, 0));
-
 	PQclear(results);
 }
 
+/*
+ * Auth database
+ */
+
 AuthDatabasePostgreSQL::AuthDatabasePostgreSQL(const std::string &connect_string) :
-	Database_PostgreSQL(connect_string, "_auth"),
+	AccountsDatabase_PostgreSQL(connect_string),
 	AuthDatabase()
 {
 	connectToDatabase();
 }
 
-void AuthDatabasePostgreSQL::createDatabase()
-{
-	createTableIfNotExists("auth",
-		"CREATE TABLE auth ("
-			"id SERIAL,"
-			"name TEXT UNIQUE,"
-			"password TEXT,"
-			"last_login INT NOT NULL DEFAULT 0,"
-			"PRIMARY KEY (id)"
-		");");
-
-	createTableIfNotExists("user_privileges",
-		"CREATE TABLE user_privileges ("
-			"id INT,"
-			"privilege TEXT,"
-			"PRIMARY KEY (id, privilege),"
-			"CONSTRAINT fk_id FOREIGN KEY (id) REFERENCES auth (id) ON DELETE CASCADE"
-		");");
-}
-
 void AuthDatabasePostgreSQL::initStatements()
 {
-	prepareStatement("auth_read", "SELECT id, name, password, last_login FROM auth WHERE name = $1");
-	prepareStatement("auth_write", "UPDATE auth SET name = $1, password = $2, last_login = $3 WHERE id = $4");
-	prepareStatement("auth_create", "INSERT INTO auth (name, password, last_login) VALUES ($1, $2, $3) RETURNING id");
-	prepareStatement("auth_delete", "DELETE FROM auth WHERE name = $1");
+	initAccountStatements();
 
-	prepareStatement("auth_list_names", "SELECT name FROM auth ORDER BY name DESC");
+	// last_login: 0 and below (the Lua side uses -1 for "not yet") is "never"
+	prepareStatement("auth_read", "SELECT id, name, password, COALESCE(last_login, 0) "
+		"FROM accounts WHERE name = $1");
+	prepareStatement("auth_write", "UPDATE accounts SET name = $1, password = $2, "
+		"last_login = NULLIF(GREATEST($3::bigint, 0), 0) WHERE id = $4::bigint");
+	prepareStatement("auth_create", "INSERT INTO accounts (name, password, last_login) "
+		"VALUES ($1, $2, NULLIF(GREATEST($3::bigint, 0), 0)) RETURNING id");
+	prepareStatement("auth_delete", "DELETE FROM accounts WHERE name = $1");
 
-	prepareStatement("auth_read_privs", "SELECT privilege FROM user_privileges WHERE id = $1");
-	prepareStatement("auth_write_privs", "INSERT INTO user_privileges (id, privilege) VALUES ($1, $2)");
-	prepareStatement("auth_delete_privs", "DELETE FROM user_privileges WHERE id = $1");
+	prepareStatement("auth_list_names", "SELECT name FROM accounts ORDER BY name DESC");
+
+	prepareStatement("auth_read_privs", "SELECT privilege FROM privileges "
+		"WHERE account_id = $1::bigint");
+	prepareStatement("auth_write_privs", "INSERT INTO privileges (account_id, privilege) "
+		"VALUES ($1::bigint, $2) ON CONFLICT DO NOTHING");
+	prepareStatement("auth_delete_privs", "DELETE FROM privileges WHERE account_id = $1::bigint");
+
+	prepareStatement("world_register", "INSERT INTO worlds (id, name) VALUES ($1::bigint, $2) "
+		"ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name");
+	prepareStatement("world_delete", "DELETE FROM worlds WHERE id = $1::bigint");
+	prepareStatement("current_world_get", "SELECT current_world_id FROM accounts WHERE name = $1");
+	prepareStatement("current_world_set", "UPDATE accounts SET current_world_id = $1::bigint "
+		"WHERE name = $2 AND current_world_id IS DISTINCT FROM $1::bigint");
 }
 
 bool AuthDatabasePostgreSQL::getAuth(const std::string &name, AuthEntry &res)
@@ -672,27 +722,23 @@ bool AuthDatabasePostgreSQL::getAuth(const std::string &name, AuthEntry &res)
 
 	const char *values[] = { name.c_str() };
 	PGresult *result = execPrepared("auth_read", 1, values, false, false);
-	int numrows = PQntuples(result);
-	if (numrows == 0) {
+	if (PQntuples(result) == 0) {
 		PQclear(result);
 		return false;
 	}
 
-	res.id = pg_to_uint(result, 0, 0);
+	res.id = strtoull(PQgetvalue(result, 0, 0), nullptr, 10);
 	res.name = pg_to_string(result, 0, 1);
 	res.password = pg_to_string(result, 0, 2);
-	res.last_login = pg_to_int(result, 0, 3);
-
+	res.last_login = strtoll(PQgetvalue(result, 0, 3), nullptr, 10);
 	PQclear(result);
 
-	std::string playerIdStr = itos(res.id);
-	const char *privsValues[] = { playerIdStr.c_str() };
-	PGresult *results = execPrepared("auth_read_privs", 1, privsValues, false);
-
-	numrows = PQntuples(results);
-	for (int row = 0; row < numrows; row++)
+	res.privileges.clear();
+	const std::string id = std::to_string(res.id);
+	const char *privsValues[] = { id.c_str() };
+	PGresult *results = execPrepared("auth_read_privs", 1, privsValues, false, false);
+	for (int row = 0; row < PQntuples(results); row++)
 		res.privileges.emplace_back(PQgetvalue(results, row, 0));
-
 	PQclear(results);
 
 	return true;
@@ -700,55 +746,34 @@ bool AuthDatabasePostgreSQL::getAuth(const std::string &name, AuthEntry &res)
 
 bool AuthDatabasePostgreSQL::saveAuth(const AuthEntry &authEntry)
 {
-	verifyDatabase();
+	transaction([&] {
+		const std::string last_login = std::to_string(authEntry.last_login);
+		const std::string id = std::to_string(authEntry.id);
+		const char *values[] = { authEntry.name.c_str(), authEntry.password.c_str(),
+			last_login.c_str(), id.c_str() };
+		execPrepared("auth_write", 4, values);
 
-	beginSave();
-
-	std::string lastLoginStr = itos(authEntry.last_login);
-	std::string idStr = itos(authEntry.id);
-	const char *values[] = {
-		authEntry.name.c_str() ,
-		authEntry.password.c_str(),
-		lastLoginStr.c_str(),
-		idStr.c_str(),
-	};
-	execPrepared("auth_write", 4, values);
-
-	writePrivileges(authEntry);
-
-	endSave();
+		writePrivileges(authEntry);
+	});
 	return true;
 }
 
 bool AuthDatabasePostgreSQL::createAuth(AuthEntry &authEntry)
 {
-	verifyDatabase();
-
-	std::string lastLoginStr = itos(authEntry.last_login);
-	const char *values[] = {
-		authEntry.name.c_str() ,
-		authEntry.password.c_str(),
-		lastLoginStr.c_str()
-	};
-
-	beginSave();
-
-	PGresult *result = execPrepared("auth_create", 3, values, false, false);
-
-	int numrows = PQntuples(result);
-	if (numrows == 0) {
-		errorstream << "Strange behavior on auth creation, no ID returned." << std::endl;
+	transaction([&] {
+		const std::string last_login = std::to_string(authEntry.last_login);
+		const char *values[] = { authEntry.name.c_str(), authEntry.password.c_str(),
+			last_login.c_str() };
+		PGresult *result = execPrepared("auth_create", 3, values, false, false);
+		if (PQntuples(result) == 0) {
+			PQclear(result);
+			throw DatabaseException("No ID returned on account creation");
+		}
+		authEntry.id = strtoull(PQgetvalue(result, 0, 0), nullptr, 10);
 		PQclear(result);
-		rollback();
-		return false;
-	}
 
-	authEntry.id = pg_to_uint(result, 0, 0);
-	PQclear(result);
-
-	writePrivileges(authEntry);
-
-	endSave();
+		writePrivileges(authEntry);
+	});
 	return true;
 }
 
@@ -756,25 +781,21 @@ bool AuthDatabasePostgreSQL::deleteAuth(const std::string &name)
 {
 	verifyDatabase();
 
+	// Privileges and the state in the worlds go with it (ON DELETE CASCADE)
 	const char *values[] = { name.c_str() };
-	execPrepared("auth_delete", 1, values);
-
-	// privileges deleted by foreign key on delete cascade
-	return true;
+	PGresult *res = execPrepared("auth_delete", 1, values, false, false);
+	const bool deleted = atoi(PQcmdTuples(res)) > 0;
+	PQclear(res);
+	return deleted;
 }
 
 void AuthDatabasePostgreSQL::listNames(std::vector<std::string> &res)
 {
 	verifyDatabase();
 
-	PGresult *results = execPrepared("auth_list_names", 0,
-		NULL, NULL, NULL, false, false);
-
-	int numrows = PQntuples(results);
-
-	for (int row = 0; row < numrows; ++row)
+	PGresult *results = execPrepared("auth_list_names", 0, NULL, NULL, NULL, false, false);
+	for (int row = 0; row < PQntuples(results); ++row)
 		res.emplace_back(PQgetvalue(results, row, 0));
-
 	PQclear(results);
 }
 
@@ -785,14 +806,58 @@ void AuthDatabasePostgreSQL::reload()
 
 void AuthDatabasePostgreSQL::writePrivileges(const AuthEntry &authEntry)
 {
-	std::string authIdStr = itos(authEntry.id);
+	const std::string authIdStr = std::to_string(authEntry.id);
 	const char *values[] = { authIdStr.c_str() };
 	execPrepared("auth_delete_privs", 1, values);
 
 	for (const std::string &privilege : authEntry.privileges) {
+		if (privilege.empty())
+			continue; // not a privilege
 		const char *values[] = { authIdStr.c_str(), privilege.c_str() };
 		execPrepared("auth_write_privs", 2, values);
 	}
+}
+
+void AuthDatabasePostgreSQL::registerWorld(u32 world_id, const std::string &name)
+{
+	transaction([&] {
+		const std::string id = itos(world_id);
+		const char *values[] = { id.c_str(), name.c_str() };
+		execPrepared("world_register", 2, values);
+	});
+}
+
+void AuthDatabasePostgreSQL::deleteWorld(u32 world_id)
+{
+	transaction([&] {
+		const std::string id = itos(world_id);
+		const char *values[] = { id.c_str() };
+		execPrepared("world_delete", 1, values);
+	});
+}
+
+bool AuthDatabasePostgreSQL::getCurrentWorld(const std::string &name, u32 *world_id)
+{
+	verifyDatabase();
+
+	const char *values[] = { name.c_str() };
+	PGresult *res = execPrepared("current_world_get", 1, values, false, false);
+	bool found = false;
+	if (PQntuples(res) && !PQgetisnull(res, 0, 0)) {
+		*world_id = (u32) strtoul(PQgetvalue(res, 0, 0), nullptr, 10);
+		found = true;
+	}
+	PQclear(res);
+	return found;
+}
+
+void AuthDatabasePostgreSQL::setCurrentWorld(const std::string &name, u32 world_id)
+{
+	transaction([&] {
+		const std::string id = itos(world_id);
+		const char *values[] = { id.c_str(), name.c_str() };
+		execPrepared("current_world_set", 2, values);
+	});
 }
 
 ModStorageDatabasePostgreSQL::ModStorageDatabasePostgreSQL(const std::string &connect_string):

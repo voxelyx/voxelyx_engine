@@ -27,7 +27,7 @@
 #include "lua_api/l_particles.h"
 #include "lua_api/l_rollback.h"
 #include "lua_api/l_server.h"
-#include "lua_api/l_multiworld.h"
+#include "lua_api/l_worlds.h"
 #include "lua_api/l_util.h"
 #include "lua_api/l_vmanip.h"
 #include "lua_api/l_settings.h"
@@ -162,7 +162,7 @@ void ServerScripting::InitializeModApi(lua_State *L, int top)
 	ModApiParticles::Initialize(L, top);
 	ModApiRollback::Initialize(L, top);
 	ModApiServer::Initialize(L, top);
-	ModApiMultiworld::Initialize(L, top);
+	ModApiWorlds::Initialize(L, top);
 	ModApiUtil::Initialize(L, top);
 	ModApiHttp::Initialize(L, top);
 	ModApiStorage::Initialize(L, top);
