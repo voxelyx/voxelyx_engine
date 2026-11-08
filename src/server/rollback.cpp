@@ -125,7 +125,7 @@ int RollbackManager::getActorId(const std::string &name)
 		}
 	}
 
-	SQLOK(sqlite3_bind_text(stmt_knownActor_insert, 1, name.c_str(), name.size(), NULL));
+	SQLOK(sqlite3_bind_text(stmt_knownActor_insert, 1, name.c_str(), name.size(), SQLITE_TRANSIENT));
 	SQLRES(sqlite3_step(stmt_knownActor_insert), SQLITE_DONE);
 	SQLOK(sqlite3_reset(stmt_knownActor_insert));
 
@@ -145,7 +145,7 @@ int RollbackManager::getNodeId(const std::string &name)
 		}
 	}
 
-	SQLOK(sqlite3_bind_text(stmt_knownNode_insert, 1, name.c_str(), name.size(), NULL));
+	SQLOK(sqlite3_bind_text(stmt_knownNode_insert, 1, name.c_str(), name.size(), SQLITE_TRANSIENT));
 	SQLRES(sqlite3_step(stmt_knownNode_insert), SQLITE_DONE);
 	SQLOK(sqlite3_reset(stmt_knownNode_insert));
 
@@ -373,7 +373,7 @@ bool RollbackManager::registerRow(const ActionRow & row)
 		const std::string & loc = row.location;
 		nodeMeta = (loc.substr(0, 9) == "nodemeta:");
 
-		SQLOK(sqlite3_bind_text(stmt_do, 4, row.list.c_str(), row.list.size(), NULL));
+		SQLOK(sqlite3_bind_text(stmt_do, 4, row.list.c_str(), row.list.size(), SQLITE_TRANSIENT));
 		SQLOK(sqlite3_bind_int (stmt_do, 5, row.index));
 		SQLOK(sqlite3_bind_int (stmt_do, 6, row.add));
 		SQLOK(sqlite3_bind_int (stmt_do, 7, row.stack.id));
@@ -409,11 +409,11 @@ bool RollbackManager::registerRow(const ActionRow & row)
 		SQLOK(sqlite3_bind_int (stmt_do, 13, row.oldNode));
 		SQLOK(sqlite3_bind_int (stmt_do, 14, row.oldParam1));
 		SQLOK(sqlite3_bind_int (stmt_do, 15, row.oldParam2));
-		SQLOK(sqlite3_bind_text(stmt_do, 16, row.oldMeta.c_str(), row.oldMeta.size(), NULL));
+		SQLOK(sqlite3_bind_text(stmt_do, 16, row.oldMeta.c_str(), row.oldMeta.size(), SQLITE_TRANSIENT));
 		SQLOK(sqlite3_bind_int (stmt_do, 17, row.newNode));
 		SQLOK(sqlite3_bind_int (stmt_do, 18, row.newParam1));
 		SQLOK(sqlite3_bind_int (stmt_do, 19, row.newParam2));
-		SQLOK(sqlite3_bind_text(stmt_do, 20, row.newMeta.c_str(), row.newMeta.size(), NULL));
+		SQLOK(sqlite3_bind_text(stmt_do, 20, row.newMeta.c_str(), row.newMeta.size(), SQLITE_TRANSIENT));
 		SQLOK(sqlite3_bind_int (stmt_do, 21, row.guessed ? 1 : 0));
 	} else {
 		if (!nodeMeta) {

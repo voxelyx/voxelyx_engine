@@ -31,6 +31,7 @@ public:
 
 	void testSchema();
 	void testRoundTrip();
+	void testInventoryItemStringsSurvive();
 	void testWorldsAreSeparate();
 	void testRemovePlayer();
 	void testCascades();
@@ -117,6 +118,7 @@ void TestAccountsDatabase::runTests(IGameDef *gamedef)
 
 	fresh(); TEST(testSchema);
 	fresh(); TEST(testRoundTrip);
+	fresh(); TEST(testInventoryItemStringsSurvive);
 	fresh(); TEST(testWorldsAreSeparate);
 	fresh(); TEST(testRemovePlayer);
 	fresh(); TEST(testCascades);
@@ -259,6 +261,55 @@ void TestAccountsDatabase::testRoundTrip()
 	UASSERTEQ(s64, count("world_players"), 1);
 	UASSERTEQ(s64, count("world_player_inventory_items"), 0);
 	UASSERTEQ(s64, count("world_player_metadata"), 0);
+}
+
+// Regression test: item strings used to be bound to the SQLite statement as a
+// temporary that was destroyed before the statement ran, so items of a saved
+// inventory could come back with a garbled or empty name ("Unknown Item").
+// Uses many items of all lengths, as a real inventory has.
+void TestAccountsDatabase::testInventoryItemStringsSurvive()
+{
+	AuthDatabaseSQLite3 auth(m_dir);
+	auth.registerWorld(1, "one");
+	makeAccount(auth, "dawnie");
+	PlayerDatabaseSQLite3 db(m_dir, 1);
+
+	std::vector<std::string> expected;
+	{
+		TestPlayer p(m_env, m_idef, "dawnie");
+		InventoryList *main = p.player.inventory.addList("main", 64);
+		for (u32 i = 0; i < 64; i++) {
+			// from tiny (fits the small-string buffer) to long names with
+			// counts, wear and metadata
+			std::string name = "mod" + std::to_string(i % 7) + ":" +
+				std::string(1 + (i * 5) % 40, char('a' + i % 26));
+			std::string str = name + " " + std::to_string(1 + i % 99);
+			if (i % 3 == 0)
+				str = name; // no count
+			if (i % 5 == 0)
+				str = name + " 1 " + std::to_string(i * 100) +
+					" \x01\x02description\x03" + std::string(i, 'x') + "\x01";
+			ItemStack stack;
+			stack.deSerialize(str);
+			expected.push_back(stack.getItemString());
+			main->changeItem(i, stack);
+		}
+		db.savePlayer(&p.player);
+	}
+
+	// Loading allocates and frees memory in between, as the server does
+	std::vector<std::string> churn;
+	for (int i = 0; i < 200; i++)
+		churn.push_back(std::string(8 + i % 90, char('A' + i % 26)));
+
+	TestPlayer q(m_env, m_idef, "dawnie");
+	UASSERT(db.loadPlayer(&q.player, q.sao.get()));
+	const InventoryList *main = q.player.inventory.getList("main");
+	UASSERT(main);
+	for (u32 i = 0; i < 64; i++) {
+		UASSERT(!main->getItem(i).empty());
+		UASSERTEQ(std::string, main->getItem(i).getItemString(), expected[i]);
+	}
 }
 
 void TestAccountsDatabase::testWorldsAreSeparate()

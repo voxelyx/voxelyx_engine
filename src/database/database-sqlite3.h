@@ -38,14 +38,20 @@ protected:
 
 	/* Value conversion helpers */
 
+	// SQLite is asked to make its own copy (SQLITE_TRANSIENT). Binding with a
+	// NULL destructor (SQLITE_STATIC) only stores the pointer, which then has to
+	// stay valid until the statement has been stepped. Callers don't (and can't
+	// be expected to) guarantee that: passing a temporary, e.g. `oss.str()`,
+	// used to make saved data read from freed memory, which corrupted the
+	// item names of saved player inventories.
 	inline void str_to_sqlite(sqlite3_stmt *s, int iCol, std::string_view str) const
 	{
-		sqlite3_vrfy(sqlite3_bind_text(s, iCol, str.data(), str.size(), NULL));
+		sqlite3_vrfy(sqlite3_bind_text(s, iCol, str.data(), str.size(), SQLITE_TRANSIENT));
 	}
 
 	inline void blob_to_sqlite(sqlite3_stmt *s, int iCol, std::string_view str) const
 	{
-		sqlite3_vrfy(sqlite3_bind_blob(s, iCol, str.data(), str.size(), NULL));
+		sqlite3_vrfy(sqlite3_bind_blob(s, iCol, str.data(), str.size(), SQLITE_TRANSIENT));
 	}
 
 	inline void int_to_sqlite(sqlite3_stmt *s, int iCol, int val) const
